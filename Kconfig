@@ -142,4 +142,13 @@ config KSU_HIDE_TIME
 	help
 	  时间源多时钟一致性 (uptime, stat, clock_gettime)
 
+config KSU_HIDE_SYSFS
+	bool "SysFS Runtime Control Interface"
+	depends on KSU_HIDE
+	default y
+	help
+	  通过 /sys/kernel/ksu_hide/ 暴露各子模块的运行时开关。
+	  每个文件可读写 0/1，0 表示关闭该模块的隐藏功能。
+	  依赖 CONFIG_SYSFS。
+
 endmenu

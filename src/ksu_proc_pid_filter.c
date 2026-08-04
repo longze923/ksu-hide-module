@@ -48,6 +48,8 @@ bool ksu_proc_pid_dirent_filter(const char *name, int namelen)
 {
     pid_t pid;
 
+    KSU_MODULE_CHECK(ksu_hide_proc_pid_enabled);
+
     if (caller_should_see_hidden())
         return false;
 

@@ -39,6 +39,8 @@ static bool should_hide_sock(struct sock *sk)
 {
     pid_t pid;
 
+    KSU_MODULE_CHECK(ksu_hide_net_enabled);
+
     if (!sk)
         return false;
 
@@ -71,6 +73,7 @@ bool ksu_net_proc_line_filter(const char *line, struct sock *sk)
 {
     if (!sk)
         return false;
+    KSU_MODULE_CHECK(ksu_hide_net_enabled);
     return should_hide_sock(sk);
 }
 
@@ -81,6 +84,9 @@ bool ksu_net_proc_line_filter(const char *line, struct sock *sk)
 static bool sun_path_has_hidden_keyword(const char *sun_path)
 {
     size_t len;
+
+    KSU_MODULE_CHECK(ksu_hide_net_enabled);
+
     if (!sun_path)
         return false;
     // 抽象 socket (@开头) 的关键词过滤
@@ -93,6 +99,8 @@ static bool sun_path_has_hidden_keyword(const char *sun_path)
 
 bool ksu_net_unix_line_filter(const char *sun_path, struct sock *sk)
 {
+    KSU_MODULE_CHECK(ksu_hide_net_enabled);
+
     if (caller_should_see_hidden())
         return false;
     if (should_hide_sock(sk))
@@ -119,6 +127,7 @@ bool ksu_net_unix_line_filter(const char *sun_path, struct sock *sk)
 
 bool ksu_diag_should_skip_sock(struct sock *sk)
 {
+    KSU_MODULE_CHECK(ksu_hide_net_enabled);
     return should_hide_sock(sk);
 }
 

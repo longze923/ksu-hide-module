@@ -25,3 +25,4 @@ obj-$(CONFIG_KSU_HIDE_AP_KER)         += ksu_ap_ker_guard.o
 obj-$(CONFIG_KSU_HIDE_IOMEM)          += ksu_iomem_cmdline_spoof.o
 obj-$(CONFIG_KSU_HIDE_SYSCALL)        += ksu_syscall_integrity.o
 obj-$(CONFIG_KSU_HIDE_TIME)           += ksu_time_virt.o
+obj-$(CONFIG_KSU_HIDE_SYSFS)          += ksu_sysfs.o

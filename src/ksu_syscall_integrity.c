@@ -69,6 +69,8 @@ bool ksu_syscall_proc_filter(pid_t target_pid, int *syscall_nr,
     if (!syscall_nr)
         return false;
 
+    KSU_MODULE_CHECK(ksu_hide_syscall_enabled);
+
     if (ksu_caller_trusted())
         return false;
 
@@ -110,6 +112,8 @@ bool ksu_ftrace_ops_filter(const char *ops_name, size_t len)
     if (!ops_name || len == 0)
         return false;
 
+    KSU_MODULE_CHECK(ksu_hide_syscall_enabled);
+
     if (ksu_caller_trusted())
         return false;
 
@@ -133,6 +137,8 @@ bool ksu_wchan_filter(const char *wchan_name, size_t len)
 {
     if (!wchan_name || len == 0)
         return false;
+
+    KSU_MODULE_CHECK(ksu_hide_syscall_enabled);
 
     if (ksu_caller_trusted())
         return false;
@@ -163,6 +169,11 @@ void ksu_wchan_spoof(char *out, size_t outsz)
 
     if (!out || outsz == 0)
         return;
+
+    if (!atomic_read(&ksu_hide_syscall_enabled)) {
+        out[0] = '\0';
+        return;
+    }
 
     if (ksu_caller_trusted()) {
         out[0] = '\0';
@@ -217,6 +228,9 @@ EXPORT_SYMBOL_GPL(ksu_wchan_spoof);
  */
 unsigned long ksu_spoof_syscall_addr(unsigned long addr)
 {
+    if (!atomic_read(&ksu_hide_syscall_enabled))
+        return addr;
+
     if (ksu_caller_trusted())
         return addr;
 

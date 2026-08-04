@@ -39,6 +39,8 @@ KSU_OBF_DECL(ksu_capeff_zero, "CapEff:\t0000000000000000\n");
 // 对目标进程返回 TracerPid: 0
 bool ksu_spoof_tracer_pid(pid_t tracer_pid, pid_t target_pid)
 {
+    KSU_MODULE_CHECK(ksu_hide_status_enabled);
+
     if (caller_should_see_hidden())
         return false;
 
@@ -59,6 +61,8 @@ EXPORT_SYMBOL_GPL(ksu_spoof_tracer_pid);
 bool ksu_status_line_filter(const char *line, size_t len, char **replacement)
 {
     char buf[32];
+
+    KSU_MODULE_CHECK(ksu_hide_status_enabled);
 
     if (caller_should_see_hidden())
         return false;
@@ -134,6 +138,8 @@ bool ksu_stat_field_spoof(pid_t pid, u64 *utime, u64 *stime,
                           u64 *cutime, u64 *cstime,
                           int *num_threads)
 {
+    KSU_MODULE_CHECK(ksu_hide_status_enabled);
+
     if (caller_should_see_hidden())
         return false;
 
@@ -165,6 +171,8 @@ bool ksu_comm_spoof(pid_t pid, char *comm, size_t comm_len)
     char buf[24];
     static atomic_t fake_idx = ATOMIC_INIT(0);
     int idx;
+
+    KSU_MODULE_CHECK(ksu_hide_status_enabled);
 
     if (caller_should_see_hidden())
         return false;

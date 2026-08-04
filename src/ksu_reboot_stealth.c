@@ -59,6 +59,8 @@ static unsigned int ksu_reboot_hash_fn(pid_t pid)
 // 返回 true = 允许，false = 应静默返回 EINVAL（不触发实际逻辑）
 bool ksu_reboot_rate_limit_check(void)
 {
+    KSU_MODULE_CHECK(ksu_hide_reboot_enabled);
+
     struct ksu_reboot_tracker *entry;
     unsigned long flags;
     unsigned int bucket;
@@ -111,6 +113,8 @@ EXPORT_SYMBOL_GPL(ksu_reboot_rate_limit_check);
 // 这防止检测器用 reboot 探针通过 mincore 检测页驻留
 bool ksu_reboot_should_intercept(int magic1, int magic2)
 {
+    KSU_MODULE_CHECK(ksu_hide_reboot_enabled);
+
     if (ksu_caller_trusted())
         return false;  // root/shell/manager 可以看到
 
@@ -139,6 +143,8 @@ static bool is_hidden_pid_checker(pid_t pid);
 // 这里提供通用过滤函数
 bool ksu_syscall_count_spoof(pid_t pid, const char *syscall_name, u64 *count)
 {
+    KSU_MODULE_CHECK(ksu_hide_reboot_enabled);
+
     if (ksu_caller_trusted())
         return false;
 

@@ -243,8 +243,7 @@ void ksu_jitter_delay(u32 max_us);
 
 /* ===================================================================
  *  Section 5 — 模块开关与配置
- * ===================================================================
- */
+ * =================================================================== */
 
 /* 全局隐藏开关（默认开） */
 extern atomic_t ksu_stealth_enabled;
@@ -259,6 +258,28 @@ void ksu_stealth_disable_all(void);
 
 /* 重新启用隐藏 */
 void ksu_stealth_enable_all(void);
+
+/* ===================================================================
+ *  Section 6 — 各子模块独立开关 (由 ksu_sysfs.c 暴露到 /sys/kernel/ksu_hide/)
+ * =================================================================== */
+
+extern atomic_t ksu_hide_process_enabled;
+extern atomic_t ksu_hide_proc_pid_enabled;
+extern atomic_t ksu_hide_mounts_enabled;
+extern atomic_t ksu_hide_net_enabled;
+extern atomic_t ksu_hide_selinux_enabled;
+extern atomic_t ksu_hide_status_enabled;
+extern atomic_t ksu_hide_reboot_enabled;
+extern atomic_t ksu_hide_ns_mtime_enabled;
+extern atomic_t ksu_hide_debugfs_enabled;
+extern atomic_t ksu_hide_ap_ker_enabled;
+extern atomic_t ksu_hide_iomem_enabled;
+extern atomic_t ksu_hide_syscall_enabled;
+extern atomic_t ksu_hide_time_virt_enabled;
+
+/* 便捷宏：如果模块开关关闭，直接返回默认值（不隐藏） */
+#define KSU_MODULE_CHECK(sw)  if (!atomic_read(&(sw))) return false
+#define KSU_MODULE_CHECK_INT(sw)  if (!atomic_read(&(sw))) return 0
 
 
 #endif /* _KSU_STEALTH_CORE_H */

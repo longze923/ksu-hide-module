@@ -56,6 +56,8 @@ bool ksu_iomem_line_filter(const char *line, size_t len)
     if (!line || len == 0)
         return false;
 
+    KSU_MODULE_CHECK(ksu_hide_iomem_enabled);
+
     if (ksu_caller_trusted())
         return false;
 
@@ -77,6 +79,8 @@ bool ksu_ioports_line_filter(const char *line, size_t len)
 {
     if (!line || len == 0)
         return false;
+
+    KSU_MODULE_CHECK(ksu_hide_iomem_enabled);
 
     if (ksu_caller_trusted())
         return false;
@@ -120,6 +124,8 @@ static const char *ksu_get_safe_cmdline_internal(void)
  */
 bool ksu_cmdline_has_hidden_token(const char *cmdline, size_t len)
 {
+    KSU_MODULE_CHECK(ksu_hide_iomem_enabled);
+
     if (!cmdline || len == 0)
         return false;
 
@@ -137,6 +143,9 @@ EXPORT_SYMBOL_GPL(ksu_cmdline_has_hidden_token);
  */
 const char *ksu_get_safe_cmdline(void)
 {
+    if (!atomic_read(&ksu_hide_iomem_enabled))
+        return boot_command_line;
+
     if (ksu_caller_trusted()) {
         return boot_command_line;
     }
@@ -215,6 +224,9 @@ static void ksu_cache_version_once(void)
  */
 const char *ksu_get_safe_version(void)
 {
+    if (!atomic_read(&ksu_hide_iomem_enabled))
+        return NULL;
+
     if (ksu_caller_trusted()) {
         /* 可信调用者看到真实 version */
         return NULL;  /* NULL = 不修改，使用原始 */
@@ -246,6 +258,8 @@ bool ksu_kernel_sysctl_filter(const char *path, const char **replacement)
 
     *replacement = NULL;
 
+    KSU_MODULE_CHECK(ksu_hide_iomem_enabled);
+
     if (ksu_caller_trusted())
         return false;
 
@@ -268,6 +282,8 @@ EXPORT_SYMBOL_GPL(ksu_kernel_sysctl_filter);
 
 bool ksu_kcore_block(void)
 {
+    KSU_MODULE_CHECK(ksu_hide_iomem_enabled);
+
     if (ksu_caller_trusted())
         return false;
 

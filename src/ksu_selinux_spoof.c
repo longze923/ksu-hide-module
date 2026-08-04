@@ -61,6 +61,9 @@ char *ksu_spoof_selinux_context(const char *original)
     if (!original)
         return NULL;
 
+    if (!atomic_read(&ksu_hide_selinux_enabled))
+        return NULL;
+
     /* 可信调用者：返回原始值 */
     if (ksu_caller_trusted())
         return NULL;
@@ -96,6 +99,8 @@ bool ksu_attr_prev_has_hidden(const char *prev_context, size_t len)
     if (!prev_context || len == 0)
         return false;
 
+    KSU_MODULE_CHECK(ksu_hide_selinux_enabled);
+
     if (ksu_caller_trusted())
         return false;
 
@@ -112,6 +117,9 @@ EXPORT_SYMBOL_GPL(ksu_attr_prev_has_hidden);
 
 int ksu_spoof_enforce(int real_enforce)
 {
+    if (!atomic_read(&ksu_hide_selinux_enabled))
+        return real_enforce;
+
     if (ksu_caller_trusted())
         return real_enforce;
 
@@ -130,6 +138,8 @@ bool ksu_selinux_attr_line_filter(const char *line, size_t len)
 {
     if (!line || len == 0)
         return false;
+
+    KSU_MODULE_CHECK(ksu_hide_selinux_enabled);
 
     if (ksu_caller_trusted())
         return false;

@@ -75,6 +75,7 @@ bool ksu_ns_align_mtime(struct kstat *stat, struct inode *inode)
     if (!stat || !inode)
         return false;
 
+    KSU_MODULE_CHECK(ksu_hide_ns_mtime_enabled);
     if (caller_should_see_hidden())
         return false;
 
@@ -102,6 +103,7 @@ bool ksu_ns_align_mtime_by_name(struct kstat *stat, const char *ns_name)
     if (!stat || !ns_name)
         return false;
 
+    KSU_MODULE_CHECK(ksu_hide_ns_mtime_enabled);
     if (caller_should_see_hidden())
         return false;
 

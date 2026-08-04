@@ -29,6 +29,8 @@ extern bool caller_should_see_hidden(void);
 // 返回 true = 该行应被跳过（不输出）
 bool ksu_mounts_line_filter(const char *line, size_t len)
 {
+    KSU_MODULE_CHECK(ksu_hide_mounts_enabled);
+
     if (caller_should_see_hidden())
         return false;
 
@@ -57,6 +59,8 @@ EXPORT_SYMBOL_GPL(ksu_mountstats_line_filter);
 // ---- 额外：过滤 /proc/filesystems ----
 bool ksu_filesystems_line_filter(const char *line, size_t len)
 {
+    KSU_MODULE_CHECK(ksu_hide_mounts_enabled);
+
     if (caller_should_see_hidden())
         return false;
     if (!line || len == 0)

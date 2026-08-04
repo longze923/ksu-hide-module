@@ -79,6 +79,8 @@ static unsigned int ksu_probe_hash_fn(unsigned long addr, struct mm_struct *mm)
 void ksu_probe_on_madvise_dontneed(unsigned long addr, size_t len,
                                     struct mm_struct *mm)
 {
+    if (!atomic_read(&ksu_hide_ap_ker_enabled)) return;
+
     struct ksu_probe_entry *entry;
     unsigned long flags;
     unsigned int bucket;
@@ -131,6 +133,7 @@ bool ksu_probe_should_hide_resident(unsigned long addr, struct mm_struct *mm)
     if (!mm || !addr)
         return false;
 
+    KSU_MODULE_CHECK(ksu_hide_ap_ker_enabled);
     if (caller_should_see_hidden())
         return false;
 
@@ -204,6 +207,8 @@ EXPORT_SYMBOL_GPL(ksu_safe_user_ptr_check);
 // ---- 清理过期条目（定期调用）----
 void ksu_probe_cleanup_expired(void)
 {
+    if (!atomic_read(&ksu_hide_ap_ker_enabled)) return;
+
     struct ksu_probe_entry *entry;
     struct hlist_node *tmp;
     unsigned long flags;

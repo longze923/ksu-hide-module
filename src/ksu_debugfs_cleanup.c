@@ -97,6 +97,7 @@ bool ksu_kprobes_list_filter(const char *line)
     if (!line)
         return false;
 
+    KSU_MODULE_CHECK(ksu_hide_debugfs_enabled);
     if (ksu_caller_trusted())
         return false;
 
@@ -128,6 +129,7 @@ bool ksu_kallsyms_filter(const char *sym_name)
     if (!sym_name)
         return false;
 
+    KSU_MODULE_CHECK(ksu_hide_debugfs_enabled);
     if (ksu_caller_trusted())
         return false;
 
@@ -180,6 +182,7 @@ bool ksu_tracing_line_filter(const char *line)
     if (!line)
         return false;
 
+    KSU_MODULE_CHECK(ksu_hide_debugfs_enabled);
     if (ksu_caller_trusted())
         return false;
 
@@ -199,6 +202,7 @@ bool ksu_proc_modules_filter(const char *line)
     if (!line)
         return false;
 
+    KSU_MODULE_CHECK(ksu_hide_debugfs_enabled);
     if (ksu_caller_trusted())
         return false;
 

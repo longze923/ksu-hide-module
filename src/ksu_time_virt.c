@@ -164,6 +164,9 @@ void ksu_fake_uptime(u64 *real_sec, u64 *real_nsec,
     u64 current_real_ns, delta_ns, fake_idle_ns;
     s32 effective_ratio_bp;
 
+    if (!atomic_read(&ksu_hide_time_virt_enabled))
+        return;
+
     if (ksu_caller_trusted())
         return;
 
@@ -221,6 +224,9 @@ void ksu_fake_proc_stat(unsigned long long *ctxt,
     u32 ctxt_ratio, proc_ratio;
     s32 eff_ctxt_bp, eff_proc_bp;
 
+    if (!atomic_read(&ksu_hide_time_virt_enabled))
+        return;
+
     if (ksu_caller_trusted())
         return;
 
@@ -274,6 +280,9 @@ EXPORT_SYMBOL_GPL(ksu_fake_proc_stat);
 void ksu_check_clock_consistency(const clockid_t which_clock,
                                  struct timespec64 *ts)
 {
+    if (!atomic_read(&ksu_hide_time_virt_enabled))
+        return;
+
     if (ksu_caller_trusted())
         return;
 

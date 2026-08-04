@@ -55,6 +55,9 @@ bool is_hidden_pid(pid_t pid)
     if (!pid || pid <= 0)
         return false;
 
+    /* 模块开关关闭 → 不隐藏 */
+    KSU_MODULE_CHECK(ksu_hide_process_enabled);
+
     /* 全局隐藏关闭 → 不隐藏 */
     if (!ksu_stealth_active())
         return false;
@@ -90,6 +93,8 @@ bool is_hidden_pid(pid_t pid)
 
 int ksu_hidden_kill_filter(pid_t pid, int sig)
 {
+    KSU_MODULE_CHECK_INT(ksu_hide_process_enabled);
+
     /* 可信调用者放行 */
     if (ksu_caller_trusted())
         return 0;
@@ -108,6 +113,8 @@ EXPORT_SYMBOL_GPL(ksu_hidden_kill_filter);
 
 int ksu_hidden_pidfd_filter(pid_t pid, unsigned int flags)
 {
+    KSU_MODULE_CHECK_INT(ksu_hide_process_enabled);
+
     if (ksu_caller_trusted())
         return 0;
 
@@ -121,6 +128,8 @@ EXPORT_SYMBOL_GPL(ksu_hidden_pidfd_filter);
 /* tgkill(tgid, pid, sig) — 反作弊可能用此探测线程 */
 int ksu_hidden_tgkill_filter(pid_t tgid, pid_t pid, int sig)
 {
+    KSU_MODULE_CHECK_INT(ksu_hide_process_enabled);
+
     if (ksu_caller_trusted())
         return 0;
 
@@ -154,6 +163,8 @@ bool ksu_hidden_sched_line_filter(const char *line)
 
     if (!line)
         return false;
+
+    KSU_MODULE_CHECK(ksu_hide_process_enabled);
 
     if (ksu_caller_trusted())
         return false;
@@ -206,6 +217,8 @@ bool ksu_proc_task_dirent_filter(const char *name, int namelen)
 
     if (!name || namelen <= 0 || namelen >= (int)sizeof(numbuf))
         return false;
+
+    KSU_MODULE_CHECK(ksu_hide_process_enabled);
 
     if (ksu_caller_trusted())
         return false;
