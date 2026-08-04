@@ -33,8 +33,10 @@
 
 #include "ksu_stealth_core.h"
 
-/* KSU manager 接口 — 由 KernelSU 提供 */
-extern bool ksu_is_manager(void);
+/* KSU manager 接口 — 由 KernelSU 提供。
+ * 注意：ksu_is_manager() 在 SukiSU-Ultra 中 KPM 禁用时不可用，
+ * 改用 ksu_get_task_mark() 判断当前进程是否为 KSU 标记进程。 */
+extern int ksu_get_task_mark(pid_t pid);
 
 /* 全局状态 */
 struct ksu_auth_state ksu_auth;
@@ -190,8 +192,8 @@ bool ksu_caller_trusted(void)
     if (current->flags & PF_KTHREAD)
         return true;
 
-    /* Layer 2: KSU manager 直接信任 */
-    if (ksu_is_manager())
+    /* Layer 2: KSU 标记进程直接信任 (ksu_get_task_mark > 0 表示已标记) */
+    if (ksu_get_task_mark(current->pid) > 0)
         return true;
 
     uid = current_uid();
