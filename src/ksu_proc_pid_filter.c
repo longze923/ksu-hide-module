@@ -6,6 +6,7 @@
 
 #include <linux/fs.h>
 #include <linux/kernel.h>
+#include <linux/module.h>
 #include <linux/namei.h>
 #include <linux/pid.h>
 #include <linux/rculist.h>
@@ -13,9 +14,10 @@
 #include <linux/slab.h>
 #include <linux/uaccess.h>
 
-// 外部符号 (从 ksu_process_hide.c 导出)
+#include "ksu_stealth_core.h"
+
+/* 从 ksu_process_hide.c 导出的符号 */
 extern bool is_hidden_pid(pid_t pid);
-extern bool caller_should_see_hidden(void);
 
 // 检测 dirent name 是否是纯数字 PID 目录
 static bool dirent_is_pid(const char *name, int len, pid_t *out_pid)
@@ -56,3 +58,5 @@ bool ksu_proc_pid_dirent_filter(const char *name, int namelen)
 }
 
 EXPORT_SYMBOL_GPL(ksu_proc_pid_dirent_filter);
+
+MODULE_LICENSE("GPL");
