@@ -1,0 +1,145 @@
+# SPDX-License-Identifier: GPL-2.0
+#
+# KSU Stealth Hide Module — Kconfig
+#
+# 三层防御架构：
+#   Layer 1: 编译期字符串混淆 (KSU_OBF) — 关键词不出现在 .rodata
+#   Layer 2: 运行时 hash 比较 (FNV-1a) — 不用 strstr/strcmp
+#   Layer 3: 强化调用者认证 — UID + anti-debug + 启动时间窗
+#
+# 该模块通过 ABK 自定义外部模块机制集成到 GKI 内核编译流程中。
+
+menu "KSU Stealth Hide Module"
+
+config KSU_HIDE
+	bool "Enable KSU Stealth Hide Module"
+	default y
+	help
+	  极致隐藏性内核模块，为 KernelSU/SukiSU/ReSukiSU 提供全面的
+	  反检测能力。
+
+	  包含以下子模块：
+	    - 进程/线程隐藏 (/proc/pid, kill, pidfd, tgkill, sched_debug)
+	    - 挂载信息过滤 (/proc/mounts, mountinfo, mountstats, filesystems)
+	    - 网络 socket 隐藏 (/proc/net/*, SOCK_DIAG)
+	    - SELinux context 伪装 (/proc/self/attr/*)
+	    - /proc/status 伪装 (TracerPid, CapEff, Uid/Gid, comm, stat)
+	    - reboot syscall 隐蔽性 (频率限制, 返回值伪装, 计数归一化)
+	    - namespace mtime 对齐 (对抗 magic_delta 检测)
+	    - kprobe/debugfs/ftrace 痕迹清理
+	    - 页驻留探针防御 (mincore/madvise)
+	    - /proc/iomem/cmdline/version 伪装
+	    - syscall 表完整性保护 / wchan 伪装
+	    - 时间源多时钟一致性
+
+	  Say Y if you want to enable stealth features.
+
+config KSU_HIDE_STEALTH_CORE
+	bool "KSU Stealth Core (required)"
+	depends on KSU_HIDE
+	default y
+	help
+	  核心模块：编译期字符串混淆、FNV-1a hash 比较、调用者认证、
+	  anti-debug 检测、时序侧信道防护。所有子模块的依赖。
+
+config KSU_HIDE_STRING_GUARD
+	bool "String Guard — keyword hash management"
+	depends on KSU_HIDE
+	default y
+	help
+	  集中管理所有隐藏关键词的 hash 常量与匹配函数。
+	  进程名、SELinux context、kprobe 符号、模块名、mounts 关键词。
+
+config KSU_HIDE_PROCESS
+	bool "Process Hiding"
+	depends on KSU_HIDE
+	default y
+	help
+	  进程隐藏：/proc/pid 枚举、kill/pidfd/tgkill 探测防御、
+	  sched_debug 行过滤、线程枚举过滤。
+
+config KSU_HIDE_PROC_PID
+	bool "/proc PID Filter"
+	depends on KSU_HIDE
+	default y
+	help
+	  /proc PID 目录枚举过滤 (fs/proc/base.c 注入)
+
+config KSU_HIDE_MOUNTS
+	bool "Mounts Filter"
+	depends on KSU_HIDE
+	default y
+	help
+	  /proc/mounts, mountinfo, mountstats, filesystems 行级过滤
+
+config KSU_HIDE_NET
+	bool "Network Socket Hiding"
+	depends on KSU_HIDE
+	default y
+	help
+	  网络 socket 隐藏：/proc/net/*, SOCK_DIAG (inet_diag/unix_diag)
+
+config KSU_HIDE_SELINUX
+	bool "SELinux Spoofing"
+	depends on KSU_HIDE
+	default y
+	help
+	  SELinux context 伪装、enforce 伪装、attr/prev 过滤
+
+config KSU_HIDE_STATUS
+	bool "Status Spoofing"
+	depends on KSU_HIDE
+	default y
+	help
+	  /proc/self/status 伪装 (TracerPid, CapEff), stat 伪装, comm 伪装
+
+config KSU_HIDE_REBOOT
+	bool "Reboot Stealth"
+	depends on KSU_HIDE
+	default y
+	help
+	  reboot syscall 频率限制、返回值伪装、syscall 计数归一化
+
+config KSU_HIDE_NS_MTIME
+	bool "Namespace mtime Alignment"
+	depends on KSU_HIDE
+	default y
+	help
+	  namespace inode mtime 对齐 (对抗 magic_delta 检测)
+
+config KSU_HIDE_DEBUGFS
+	bool "Debugfs Cleanup"
+	depends on KSU_HIDE
+	default y
+	help
+	  kprobe/debugfs/ftrace 痕迹清理、kallsyms/proc/modules 过滤
+
+config KSU_HIDE_AP_KER
+	bool "Page Probe Defense"
+	depends on KSU_HIDE
+	default y
+	help
+	  页驻留探针防御 (mincore/madvise/truncate)
+
+config KSU_HIDE_IOMEM
+	bool "IO Mem / Cmdline Spoofing"
+	depends on KSU_HIDE
+	default y
+	help
+	  /proc/iomem, /proc/ioports, /proc/cmdline, /proc/version 伪装
+
+config KSU_HIDE_SYSCALL
+	bool "Syscall Integrity"
+	depends on KSU_HIDE
+	default y
+	help
+	  syscall 表保护、/proc/self/syscall 过滤、ftrace ops 过滤、wchan 伪装
+
+config KSU_HIDE_TIME
+	bool "Time Source Consistency"
+	depends on KSU_HIDE
+	default y
+	help
+	  时间源多时钟一致性 (uptime, stat, clock_gettime)
+
+endmenu
