@@ -271,6 +271,47 @@ inject_code() {
     return 0
 }
 
+# 在指定锚点行之前插入代码（用于在 dir_emit 等调用前插入过滤逻辑）
+inject_before() {
+    local file="$1"
+    local anchor="$2"
+    local code="$3"
+    local check="$4"
+    local name="$5"
+
+    if [ ! -f "$file" ]; then
+        echo "  [MISS] $name — file not found: $file"
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+        return 0
+    fi
+
+    if grep -qF "$check" "$file" 2>/dev/null; then
+        echo "  [SKIP] $name — already injected"
+        SKIP_COUNT=$((SKIP_COUNT + 1))
+        return 0
+    fi
+
+    local anchor_line
+    anchor_line=$(grep -nF "$anchor" "$file" 2>/dev/null | head -1 | cut -d: -f1)
+    if [ -z "$anchor_line" ]; then
+        echo "  [FAIL] $name — anchor not found"
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+        return 0
+    fi
+
+    # 在锚点行之前插入
+    sed -i "${anchor_line}i\\${code}" "$file"
+
+    if grep -qF "$check" "$file"; then
+        echo "  [OK]   $name"
+        PASS_COUNT=$((PASS_COUNT + 1))
+    else
+        echo "  [FAIL] $name — injection failed"
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+    fi
+    return 0
+}
+
 # ===========================================================================
 # 注入规则: add_extern 的 check 用函数签名片段(含参数类型)
 #           inject_code 的 check 用函数调用片段(含实参)
@@ -291,12 +332,13 @@ inject_code "$PROC_BASE" \
     'proc_pid_readdir (PID hiding)'
 
 # --- 线程枚举过滤 — proc_task_readdir ---------------------------------------
+# 使用 inject_before 在 dir_emit 之前插入，锚点含 tid（proc_pid_readdir 用 tgid，不会误匹配）
 add_extern "$PROC_BASE" \
     'extern bool ksu_proc_task_dirent_filter(const char *name, int namelen);' \
     'ksu_proc_task_dirent_filter(const char'
 
-inject_code "$PROC_BASE" \
-    'ctx->pos = tid' \
+inject_before "$PROC_BASE" \
+    'dir_emit(ctx, name, len, tid' \
     'if (ksu_proc_task_dirent_filter(name, len)) continue;' \
     'ksu_proc_task_dirent_filter(name, len)' \
     'proc_task_readdir (thread hiding)'
