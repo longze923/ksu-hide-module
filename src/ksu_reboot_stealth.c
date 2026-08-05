@@ -73,41 +73,43 @@ bool ksu_reboot_rate_limit_check(void)
 
     now = ksu_reboot_time_ms();
 
-    spin_lock_irqsave(&ksu_reboot_lock, flags);
-    bucket = ksu_reboot_hash_fn(current->pid);
-    hlist_for_each_entry(entry, &ksu_reboot_hash[bucket], node) {
-        if (entry->pid == current->pid) {
-            found = true;
-            if (now < entry->next_allowed_ms) {
-                allowed = false;
-            } else {
-                // 允许，更新下次允许时间
-                u32 jitter = 0;
-                get_random_bytes(&jitter, sizeof(jitter));
-                jitter = jitter % KSU_REBOOT_JITTER_MS;
-                entry->last_call_ms = now;
-                entry->next_allowed_ms = now + KSU_REBOOT_MIN_INTERVAL_MS + jitter;
+    /* 在锁外生成随机 jitter — get_random_bytes 可能睡眠，
+     * 绝不能在 spin_lock_irqsave 内调用 */
+    {
+        u32 pre_jitter = 0;
+        get_random_bytes(&pre_jitter, sizeof(pre_jitter));
+        pre_jitter = pre_jitter % KSU_REBOOT_JITTER_MS;
+
+        spin_lock_irqsave(&ksu_reboot_lock, flags);
+        bucket = ksu_reboot_hash_fn(current->pid);
+        hlist_for_each_entry(entry, &ksu_reboot_hash[bucket], node) {
+            if (entry->pid == current->pid) {
+                found = true;
+                if (now < entry->next_allowed_ms) {
+                    allowed = false;
+                } else {
+                    // 允许，更新下次允许时间
+                    entry->last_call_ms = now;
+                    entry->next_allowed_ms = now + KSU_REBOOT_MIN_INTERVAL_MS + pre_jitter;
+                }
+                break;
             }
-            break;
         }
-    }
 
-    if (allowed && !found) {
-        // 没找到条目，创建一个
-        struct ksu_reboot_tracker *new_entry;
-        u32 jitter = 0;
-        new_entry = kzalloc(sizeof(*new_entry), GFP_ATOMIC);
-        if (new_entry) {
-            get_random_bytes(&jitter, sizeof(jitter));
-            jitter = jitter % KSU_REBOOT_JITTER_MS;
-            new_entry->pid = current->pid;
-            new_entry->last_call_ms = now;
-            new_entry->next_allowed_ms = now + KSU_REBOOT_MIN_INTERVAL_MS + jitter;
-            hash_add(ksu_reboot_hash, &new_entry->node, bucket);
+        if (allowed && !found) {
+            // 没找到条目，创建一个
+            struct ksu_reboot_tracker *new_entry;
+            new_entry = kzalloc(sizeof(*new_entry), GFP_ATOMIC);
+            if (new_entry) {
+                new_entry->pid = current->pid;
+                new_entry->last_call_ms = now;
+                new_entry->next_allowed_ms = now + KSU_REBOOT_MIN_INTERVAL_MS + pre_jitter;
+                hash_add(ksu_reboot_hash, &new_entry->node, bucket);
+            }
         }
-    }
 
-    spin_unlock_irqrestore(&ksu_reboot_lock, flags);
+        spin_unlock_irqrestore(&ksu_reboot_lock, flags);
+    }
     return allowed;
 }
 EXPORT_SYMBOL_GPL(ksu_reboot_rate_limit_check);

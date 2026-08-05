@@ -195,6 +195,10 @@ bool ksu_caller_trusted(void)
     if (unlikely(!current))
         return false;
 
+    /* 延迟初始化：首次调用时完成认证状态的初始化 */
+    if (unlikely(!ksu_auth_initialized))
+        ksu_stealth_core_init_once();
+
     /* Layer 1: 内核线程直接信任 */
     if (current->flags & PF_KTHREAD)
         return true;
@@ -279,12 +283,23 @@ EXPORT_SYMBOL_GPL(ksu_stealth_enable_all);
  * ===================================================================
  */
 
-static int __init ksu_stealth_core_init(void)
+/* 延迟初始化：在 ksu_caller_trusted() 首次调用时自动完成
+ * 不使用 early_initcall，避免在启动极早期调用 ktime_get_boottime_ns
+ * 可能在某些内核配置下不稳定导致卡米 */
+static bool ksu_auth_initialized;
+static DEFINE_SPINLOCK(ksu_auth_init_lock);
+
+static void ksu_stealth_core_init_once(void)
 {
-    spin_lock_init(&ksu_auth.lock);
-    ksu_auth.boot_allow_ms = ksu_monotonic_ms() + 30000; /* 启动后 30 秒允许 manager */
-    return 0;
+    unsigned long flags;
+
+    spin_lock_irqsave(&ksu_auth_init_lock, flags);
+    if (!ksu_auth_initialized) {
+        spin_lock_init(&ksu_auth.lock);
+        ksu_auth.boot_allow_ms = ksu_monotonic_ms() + 30000;
+        ksu_auth_initialized = true;
+    }
+    spin_unlock_irqrestore(&ksu_auth_init_lock, flags);
 }
-early_initcall(ksu_stealth_core_init);
 
 MODULE_LICENSE("GPL");

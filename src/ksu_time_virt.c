@@ -67,7 +67,23 @@ static void ksu_init_baseline_if_needed(void)
 {
     struct timespec64 ts;
     unsigned long flags;
-    u32 rnd;
+    u32 rnd_seed, idle_rnd, ctxt_rnd, proc_rnd, noise_rnd, drift_rnd;
+
+    /* 快速路径：已初始化则直接返回，不加锁 */
+    if (g_baseline.initialized)
+        return;
+
+    /* 在锁外生成所有随机数 — get_random_bytes 可能睡眠，
+     * 绝不能在 spin_lock_irqsave 内调用 */
+    get_random_bytes(&rnd_seed, sizeof(rnd_seed));
+    idle_rnd = rnd_seed % 700;
+    get_random_bytes(&rnd_seed, sizeof(rnd_seed));
+    ctxt_rnd = rnd_seed % 300;
+    get_random_bytes(&rnd_seed, sizeof(rnd_seed));
+    proc_rnd = rnd_seed % 300;
+    get_random_bytes(&rnd_seed, sizeof(rnd_seed));
+    noise_rnd = rnd_seed % 70;
+    get_random_bytes(&drift_rnd, sizeof(drift_rnd));
 
     spin_lock_irqsave(&ksu_time_lock, flags);
     if (g_baseline.initialized) {
@@ -94,8 +110,7 @@ static void ksu_init_baseline_if_needed(void)
         g_baseline.baseline_boottime_ns - g_baseline.baseline_monotonic_raw_ns;
 
     /* 随机化缩放参数 — 每次启动不同，防止反作弊预计算阈值 */
-    get_random_bytes(&rnd, sizeof(rnd));
-    g_baseline.idle_ratio_bp = 8800 + (rnd % 700);  /* 88.00% - 94.99% */
+    g_baseline.idle_ratio_bp = 8800 + idle_rnd;  /* 88.00% - 94.99% */
 
     /* 增量法基线：记录基线时刻的真实 uptime 和对应的 fake idle
      * 后续 fake_idle = baseline_fake_idle + delta * ratio
@@ -104,17 +119,10 @@ static void ksu_init_baseline_if_needed(void)
     g_baseline.baseline_fake_idle_ns = div_u64(
         g_baseline.baseline_real_uptime_ns * g_baseline.idle_ratio_bp, 10000);
 
-    get_random_bytes(&rnd, sizeof(rnd));
-    g_baseline.ctxt_keep_ratio_bp = 9700 + (rnd % 300);  /* 97.00% - 99.99% */
-
-    get_random_bytes(&rnd, sizeof(rnd));
-    g_baseline.proc_keep_ratio_bp = 9700 + (rnd % 300);  /* 97.00% - 99.99% */
-
-    get_random_bytes(&rnd, sizeof(rnd));
-    g_baseline.noise_amplitude_bp = 30 + (rnd % 70);  /* 0.3% - 0.99% */
-
-    get_random_bytes(&rnd, sizeof(rnd));
-    g_baseline.drift_phase = rnd;
+    g_baseline.ctxt_keep_ratio_bp = 9700 + ctxt_rnd;  /* 97.00% - 99.99% */
+    g_baseline.proc_keep_ratio_bp = 9700 + proc_rnd;  /* 97.00% - 99.99% */
+    g_baseline.noise_amplitude_bp = 30 + noise_rnd;  /* 0.3% - 0.99% */
+    g_baseline.drift_phase = drift_rnd;
 
     g_baseline.initialized = true;
     spin_unlock_irqrestore(&ksu_time_lock, flags);
