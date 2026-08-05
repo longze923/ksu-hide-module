@@ -567,6 +567,10 @@ inject_before "$PROC_NS" \
 # 必须用 inject_code 紧贴 struct sock *s = v; 锚点注入
 UNIX_FILE="${KERNEL_COMMON}/net/unix/af_unix.c"
 add_extern "$UNIX_FILE" \
+    'extern bool ksu_net_proc_line_filter(const char *line, struct sock *sk);' \
+    'ksu_net_proc_line_filter(const char'
+
+add_extern "$UNIX_FILE" \
     'extern bool ksu_net_unix_line_filter(const char *sun_path, struct sock *sk);' \
     'ksu_net_unix_line_filter(const char'
 
