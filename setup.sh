@@ -170,47 +170,6 @@ for opt in "${CONFIG_OPTIONS[@]}"; do
 done
 
 # ============================================================================
-# [6.5/7] DEBUG: 输出注入目标函数的源码，用于确认锚点
-# ============================================================================
-echo ""
-echo "[6.5/7] DEBUG: Dumping target function sources..."
-echo "================================================"
-DUMP_FUNC() {
-    local file="$1" func="$2"
-    if [ ! -f "$file" ]; then
-        echo "  [MISS] $file"
-        return
-    fi
-    echo ""
-    echo "===== $file ($func) ====="
-    local start
-    start=$(grep -n "$func" "$file" 2>/dev/null | head -1 | cut -d: -f1)
-    if [ -z "$start" ]; then
-        echo "  (function not found)"
-    else
-        sed -n "${start},+50p" "$file"
-    fi
-    echo "===== END ====="
-}
-
-DUMP_FUNC "${KERNEL_COMMON}/fs/proc/base.c" 'proc_pid_readdir'
-DUMP_FUNC "${KERNEL_COMMON}/fs/proc/base.c" 'proc_task_readdir'
-DUMP_FUNC "${KERNEL_COMMON}/fs/proc_namespace.c" 'show_vfsmnt'
-DUMP_FUNC "${KERNEL_COMMON}/net/unix/af_unix.c" 'unix_seq_show'
-DUMP_FUNC "${KERNEL_COMMON}/net/ipv4/tcp_ipv4.c" 'tcp4_seq_show'
-DUMP_FUNC "${KERNEL_COMMON}/kernel/kallsyms.c" 'static int s_show'
-DUMP_FUNC "${KERNEL_COMMON}/kernel/module.c" 'static int m_show'
-DUMP_FUNC "${KERNEL_COMMON}/fs/proc/uptime.c" 'uptime_proc_show'
-DUMP_FUNC "${KERNEL_COMMON}/fs/proc/cmdline.c" 'cmdline_proc_show'
-DUMP_FUNC "${KERNEL_COMMON}/fs/proc/version.c" 'version_proc_show'
-DUMP_FUNC "${KERNEL_COMMON}/kernel/resource.c" 'static int r_show'
-DUMP_FUNC "${KERNEL_COMMON}/security/selinux/selinuxfs.c" 'sel_read_enforce'
-DUMP_FUNC "${KERNEL_COMMON}/fs/proc/array.c" 'proc_pid_status'
-
-echo "================================================"
-echo ""
-
-# ============================================================================
 # [7/7] 注入调用点 — 将导出函数挂到内核路径
 # ============================================================================
 echo ""
@@ -353,6 +312,132 @@ inject_before() {
     return 0
 }
 
+# 自动适配注入：找到目标函数，跳过所有变量声明，在最后一个声明后注入
+# 用法: inject_after_decls file func_sig_pattern code check name
+# 工作原理：
+#   1. 用 func_sig_pattern 匹配函数签名行
+#   2. 找到 { 括号
+#   3. 从 { 之后逐行扫描，用类型关键字正则识别变量声明
+#   4. 遇到第一个非声明行停止，在最后一个声明行之后注入
+# 能正确处理 C89 声明必须在代码之前的规则，不依赖任何硬编码锚点。
+inject_after_decls() {
+    local file="$1"
+    local func_sig="$2"
+    local code="$3"
+    local check="$4"
+    local name="$5"
+
+    if [ ! -f "$file" ]; then
+        echo "  [MISS] $name — file not found: $file"
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+        return 0
+    fi
+
+    if grep -qF "$check" "$file" 2>/dev/null; then
+        echo "  [SKIP] $name — already injected"
+        SKIP_COUNT=$((SKIP_COUNT + 1))
+        return 0
+    fi
+
+    # 1. 找到函数签名行
+    local func_line
+    func_line=$(grep -n "$func_sig" "$file" 2>/dev/null | head -1 | cut -d: -f1)
+    if [ -z "$func_line" ]; then
+        echo "  [FAIL] $name — function not found ($func_sig)"
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+        return 0
+    fi
+
+    # 2. 找到 { 行（在函数签名后10行内）
+    local brace_off
+    brace_off=$(tail -n +${func_line} "$file" | grep -n -E '^\{[[:space:]]*$|\)[[:space:]]*\{[[:space:]]*$' | head -1 | cut -d: -f1)
+    if [ -z "$brace_off" ]; then
+        echo "  [FAIL] $name — brace not found"
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+        return 0
+    fi
+    local brace_line=$((func_line + brace_off - 1))
+
+    # 3. 从 { 之后逐行扫描，识别变量声明
+    local last_decl_line=$brace_line
+    local line=$((brace_line + 1))
+    local max_scan=60
+    # 匹配 C 变量声明行：以类型关键字开头（可选 static/const/extern/volatile 等修饰符）
+    local decl_pattern='^\s*(static\s+|extern\s+|const\s+|volatile\s+|register\s+|__user\s+|__kernel\s+|__force\s+|__iomem\s+|__rcu\s+)*(struct\s+|union\s+|enum\s+|int\s+|char\s+|void\s+|bool\s+|unsigned\s+|long\s+|short\s+|double\s+|float\s+|size_t\s+|ssize_t\s+|u[0-9]+\s+|s[0-9]+\s+|uint[0-9]+_t\s+|int[0-9]+_t\s+|typeof\s+|__typeof__\s+|atomic_t\s+|spinlock_t\s+|mutex\s+|rwlock_t\s+|loff_t\s+|gfp_t\s+|pid_t\s+|uid_t\s+|gid_t\s+|umode_t\s+|dev_t\s+|ino_t\s+|off_t\s+|time64_t\s+|ktime_t\s+|seqcount_t\s+|\w+_t\s+)'
+
+    while [ "$line" -le $((brace_line + max_scan)) ]; do
+        local line_text
+        line_text=$(sed -n "${line}p" "$file" 2>/dev/null)
+
+        # 跳过空行
+        if [ -z "$(echo "$line_text" | tr -d '[:space:]')" ]; then
+            line=$((line + 1))
+            continue
+        fi
+
+        # 跳过注释行
+        if echo "$line_text" | grep -qE '^\s*(/\*|\*|//)'; then
+            line=$((line + 1))
+            continue
+        fi
+
+        # 跳过预处理器指令
+        if echo "$line_text" | grep -qE '^\s*#'; then
+            line=$((line + 1))
+            continue
+        fi
+
+        # 跳过标签 (如 out:)
+        if echo "$line_text" | grep -qE '^\s*[a-zA-Z_][a-zA-Z0-9_]*\s*:'; then
+            line=$((line + 1))
+            continue
+        fi
+
+        # 检查是否是变量声明（匹配类型关键字，且不是 for 循环）
+        if echo "$line_text" | grep -qE "$decl_pattern" && ! echo "$line_text" | grep -qE '^\s*for\s*\('; then
+            last_decl_line=$line
+
+            # 处理多行声明（struct initializer 跨行，含 { 但无 };）
+            if echo "$line_text" | grep -q '{' && ! echo "$line_text" | grep -qE '\};[[:space:]]*$'; then
+                local inner=$((line + 1))
+                while [ "$inner" -le $((brace_line + max_scan)) ]; do
+                    local inner_text
+                    inner_text=$(sed -n "${inner}p" "$file" 2>/dev/null)
+                    if echo "$inner_text" | grep -qE '\};'; then
+                        last_decl_line=$inner
+                        line=$inner
+                        break
+                    fi
+                    if echo "$inner_text" | grep -q ';' && ! echo "$inner_text" | grep -q '{'; then
+                        last_decl_line=$inner
+                        line=$inner
+                        break
+                    fi
+                    inner=$((inner + 1))
+                done
+            fi
+
+            line=$((line + 1))
+            continue
+        fi
+
+        # 不是声明也不是空行/注释 — 停止扫描
+        break
+    done
+
+    # 4. 在最后一个声明行之后注入
+    sed -i "${last_decl_line}a\\${code}" "$file"
+
+    if grep -qF "$check" "$file"; then
+        echo "  [OK]   $name (auto, after line $last_decl_line)"
+        PASS_COUNT=$((PASS_COUNT + 1))
+    else
+        echo "  [FAIL] $name — injection failed"
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+    fi
+    return 0
+}
+
 # ===========================================================================
 # 注入规则: add_extern 的 check 用函数签名片段(含参数类型)
 #           inject_code 的 check 用函数调用片段(含实参)
@@ -402,43 +487,40 @@ inject_before "$PROC_NS" \
     'show_vfsmnt (mounts hiding)'
 
 # --- 3. 网络隐藏 — net/unix/af_unix.c ---------------------------------------
-# Android 5.15 实际源码: unix_seq_show() 中 s 在 else{} 块内声明
-# 不能注入在 { 之后（s 未声明），锚点改为 struct sock *s = v;
+# 使用 inject_after_decls 自动适配，不依赖硬编码锚点
 UNIX_FILE="${KERNEL_COMMON}/net/unix/af_unix.c"
 add_extern "$UNIX_FILE" \
     'extern bool ksu_net_unix_line_filter(const char *sun_path, struct sock *sk);' \
     'ksu_net_unix_line_filter(const char'
 
-inject_code "$UNIX_FILE" \
-    'struct sock *s = v;' \
+inject_after_decls "$UNIX_FILE" \
+    'static int unix_seq_show(' \
     'if (ksu_net_unix_line_filter(NULL, s)) return 0;' \
     'ksu_net_unix_line_filter(NULL' \
     'unix_seq_show (socket hiding)'
 
 # --- 4. TCP socket 隐藏 — net/ipv4/tcp_ipv4.c -------------------------------
-# Android 5.15 实际源码: tcp4_seq_show() 中 sk 在函数顶部声明
-# 不能注入在 { 之后（sk 未声明），锚点改为 struct sock *sk = v;
+# 使用 inject_after_decls 自动适配，不依赖硬编码锚点
 TCP_FILE="${KERNEL_COMMON}/net/ipv4/tcp_ipv4.c"
 add_extern "$TCP_FILE" \
     'extern bool ksu_net_proc_line_filter(const char *line, struct sock *sk);' \
     'ksu_net_proc_line_filter(const char'
 
-inject_code "$TCP_FILE" \
-    'struct sock *sk = v;' \
+inject_after_decls "$TCP_FILE" \
+    'static void tcp4_seq_show(' \
     'if (ksu_net_proc_line_filter(NULL, sk)) return 0;' \
     'ksu_net_proc_line_filter(NULL' \
     'tcp4_seq_show (TCP hiding)'
 
 # --- 5. kallsyms 隐藏 — kernel/kallsyms.c -----------------------------------
-# Android 5.15 实际源码: s_show() 无 buf 变量，使用 iter->name 直接输出
-# 锚点改为 void *value; (第一个变量声明)，注入使用 iter->name
+# 使用 inject_after_decls 自动适配，不依赖硬编码锚点
 KALLSYMS="${KERNEL_COMMON}/kernel/kallsyms.c"
 add_extern "$KALLSYMS" \
     'extern bool ksu_kallsyms_filter(const char *sym_name);' \
     'ksu_kallsyms_filter(const char'
 
-inject_code "$KALLSYMS" \
-    'void *value;' \
+inject_after_decls "$KALLSYMS" \
+    'static int s_show(' \
     'if (ksu_kallsyms_filter(iter->name)) return 0;' \
     'ksu_kallsyms_filter(iter->name)' \
     'kallsyms s_show (symbol hiding)'
@@ -468,59 +550,53 @@ inject_before "$MOD_MAIN" \
 # ===========================================================================
 
 # --- 8. /proc/uptime 伪装 — fs/proc/uptime.c ---------------------------------
-# Android 5.15 内核注意：
-#   - Android 内核有 idle_nsec 变量（上游 5.15 没有，是 nsec）
-#   - 第一个执行语句是 idle_nsec = 0;（不是 nsec = 0;）
-#   - uptime/idle 是 struct timespec64，需用 .tv_sec/.tv_nsec 字段 + (u64 *) 强制转换
-#   - idle_nsec 参数直接传 &idle_nsec（已是 u64），函数修改后原代码用 div_u64_rem 拆分
+# 使用 inject_after_decls 自动适配，不依赖硬编码锚点
 PROC_UPTIME="${KERNEL_COMMON}/fs/proc/uptime.c"
 add_extern "$PROC_UPTIME" \
     'extern void ksu_fake_uptime(u64 *real_sec, u64 *real_nsec, u64 *idle_sec, u64 *idle_nsec);' \
     'ksu_fake_uptime(u64'
 
-inject_before "$PROC_UPTIME" \
-    'idle_nsec = 0;' \
+inject_after_decls "$PROC_UPTIME" \
+    'static int uptime_proc_show(' \
     'ksu_fake_uptime((u64 *)&uptime.tv_sec, (u64 *)&uptime.tv_nsec, (u64 *)&idle.tv_sec, &idle_nsec);' \
     'ksu_fake_uptime((u64' \
     'uptime_proc_show (uptime spoofing)'
 
 # --- 9. /proc/cmdline 伪装 — fs/proc/cmdline.c -------------------------------
-# 使用 inject_code + 函数签名锚点，注入在 { 之后（KSU 代码之前）
+# 使用 inject_after_decls 自动适配，不依赖硬编码锚点
 PROC_CMDLINE="${KERNEL_COMMON}/fs/proc/cmdline.c"
 add_extern "$PROC_CMDLINE" \
     'extern const char *ksu_get_safe_cmdline(void);' \
     'ksu_get_safe_cmdline(void'
 
-inject_code "$PROC_CMDLINE" \
+inject_after_decls "$PROC_CMDLINE" \
     'static int cmdline_proc_show(' \
     'const char *safe = ksu_get_safe_cmdline(); if (safe) { seq_printf(m, "%s\\\\n", safe); return 0; }' \
     'safe = ksu_get_safe_cmdline()' \
     'cmdline_proc_show (cmdline spoofing)'
 
 # --- 10. /proc/version 伪装 — fs/proc/version.c ------------------------------
-# 使用 inject_code + 函数签名锚点，注入在 { 之后（KSU 代码之前）
+# 使用 inject_after_decls 自动适配，不依赖硬编码锚点
 PROC_VERSION="${KERNEL_COMMON}/fs/proc/version.c"
 add_extern "$PROC_VERSION" \
     'extern const char *ksu_get_safe_version(void);' \
     'ksu_get_safe_version(void'
 
-inject_code "$PROC_VERSION" \
+inject_after_decls "$PROC_VERSION" \
     'static int version_proc_show(' \
     'const char *safe_ver = ksu_get_safe_version(); if (safe_ver) { seq_printf(m, "%s\\\\n", safe_ver); return 0; }' \
     'safe_ver = ksu_get_safe_version()' \
     'version_proc_show (version spoofing)'
 
 # --- 11. /proc/iomem 隐藏 — kernel/resource.c --------------------------------
-# 5.15 内核注意：r_show 有 5 个变量声明，最后一个才是 int depth;
-# struct resource *r = v, *p; 后面还有 unsigned long long start, end;
-# int width; int depth; 三个声明，注入在 int depth; 之后确保 C89 合规
+# 使用 inject_after_decls 自动适配，不依赖硬编码锚点
 RESOURCE="${KERNEL_COMMON}/kernel/resource.c"
 add_extern "$RESOURCE" \
     'extern bool ksu_iomem_line_filter(const char *line, size_t len);' \
     'ksu_iomem_line_filter(const char'
 
-inject_code "$RESOURCE" \
-    'int depth;' \
+inject_after_decls "$RESOURCE" \
+    'static int r_show(' \
     'if (ksu_iomem_line_filter(m->buf, m->count)) return 0;' \
     'ksu_iomem_line_filter(m->buf' \
     'resource r_show (iomem hiding)'
@@ -546,15 +622,14 @@ inject_code "$SELINUXFS" \
 # ===========================================================================
 
 # --- 15. /proc/self/status 伪装 — fs/proc/array.c ----------------------------
-# 5.15 内核注意：proc_pid_status 有局部变量声明(struct mm_struct *mm)，
-# 不能注入在 { 之后。锚点改为 task_state(m, ns, pid, task)（第一个函数调用）
+# 使用 inject_after_decls 自动适配，不依赖硬编码锚点
 PROC_ARRAY="${KERNEL_COMMON}/fs/proc/array.c"
 add_extern "$PROC_ARRAY" \
     'extern bool ksu_status_line_filter(const char *line, size_t len, char **replacement);' \
     'ksu_status_line_filter(const char'
 
-inject_before "$PROC_ARRAY" \
-    'task_state(m, ns, pid, task)' \
+inject_after_decls "$PROC_ARRAY" \
+    'int proc_pid_status(' \
     'char *replacement = NULL; if (ksu_status_line_filter(m->buf, m->count, &replacement)) { if (replacement) { seq_puts(m, replacement); kfree(replacement); } return 0; }' \
     'ksu_status_line_filter(m->buf' \
     'proc_pid_status (status spoofing)'
