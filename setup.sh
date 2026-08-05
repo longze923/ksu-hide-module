@@ -612,14 +612,14 @@ inject_code "$TCP_FILE" \
     'ksu_net_proc_line_filter(NULL, sk))' \
     'tcp4_seq_show (TCP hiding)'
 
-# --- 4b. unix 抽象 socket 名字关键词过滤 (sun_path) --------------------------
-# 在 unix_seq_show 输出 sun_path 之前过滤 @ksud/@suki 等抽象 socket 名。
-# 注：此时 unix_state_lock(s) 已持有，提前返回必须先解锁。
+# --- 4b. [诊断停用] unix sun_path 过滤 --------------------------------------
+if false; then
 inject_before "$UNIX_FILE" \
     'under unix_table_lock here' \
     'if (u->addr && ksu_net_unix_line_filter(u->addr->name->sun_path, s)) { unix_state_unlock(s); return 0; }' \
     'ksu_net_unix_line_filter(u->addr' \
     'unix_seq_show (sun_path hiding)'
+fi
 
 # --- 5. kallsyms 隐藏 — kernel/kallsyms.c -----------------------------------
 # 使用 inject_after_decls 自动适配，不依赖硬编码锚点
@@ -728,6 +728,9 @@ inject_before "$SELINUXFS" \
 #     为原地修改接口后才能正确注入，暂时跳过
 # ===========================================================================
 
+# --- 15-21. [诊断停用] 新钩子组 ---------------------------------------------
+if false; then
+
 # --- 15. /proc/self/status 伪装 (TracerPid / CapEff) — fs/proc/array.c ------
 # 在 proc_pid_status 返回前对整段缓冲区做逐行过滤（原地压缩），
 # 非零 TracerPid 伪装为 0、全 f CapEff 伪装为 0。
@@ -829,6 +832,7 @@ inject_code "$POSIX_TIMERS" \
     'ksu_check_clock_consistency(which_clock, &kernel_tp);' \
     'ksu_check_clock_consistency(which_clock' \
     'clock_gettime (clock consistency)'
+fi
 
 # --- 22. reboot 隐匿 — 由 ksu_reboot_stealth.c 的 kprobe 实现 ----------------
 # 在模块内注册 __arm64_sys_reboot kprobe，无需内核源码注入。
