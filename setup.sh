@@ -296,7 +296,7 @@ add_extern "$PROC_BASE" \
     'ksu_proc_task_dirent_filter(const char'
 
 inject_code "$PROC_BASE" \
-    'ctx->pos = iter.tid' \
+    'ctx->pos = tid' \
     'if (ksu_proc_task_dirent_filter(name, len)) continue;' \
     'ksu_proc_task_dirent_filter(name, len)' \
     'proc_task_readdir (thread hiding)'
