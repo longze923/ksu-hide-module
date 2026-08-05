@@ -215,7 +215,7 @@ EXPORT_SYMBOL_GPL(ksu_reboot_cleanup_pid);
  *  对可信调用者（root/shell/KSU 管理器/内核线程）：完全放行。
  */
 
-static int ksu_reboot_kprobe_pre(struct kprobe *p, struct pt_regs *regs)
+static int __maybe_unused ksu_reboot_kprobe_pre(struct kprobe *p, struct pt_regs *regs)
 {
     u32 magic1, magic2;
 
@@ -258,6 +258,12 @@ static int ksu_reboot_kprobe_pre(struct kprobe *p, struct pt_regs *regs)
     return 0;
 }
 
+/*
+ * 诊断模式：临时移除 reboot kprobe 注册。
+ * 嫌疑：与 SukiSU 已注册的同址 kprobe 及 KPM 内联 hook 交互导致开机失败。
+ * 定位完成后恢复注册。
+ */
+#if 0
 static struct kprobe ksu_reboot_kp = {
 #if defined(__aarch64__)
     .symbol_name = "__arm64_sys_reboot",
@@ -288,5 +294,6 @@ static void __exit ksu_reboot_stealth_exit(void)
 
 module_init(ksu_reboot_stealth_init);
 module_exit(ksu_reboot_stealth_exit);
+#endif
 
 MODULE_LICENSE("GPL");
