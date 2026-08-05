@@ -230,6 +230,7 @@ inject_code() {
     local anchor_line
     anchor_line=$(grep -nF "$anchor" "$file" 2>/dev/null | head -1 | cut -d: -f1)
     if [ -z "$anchor_line" ]; then
+        dump_context "$file" "$anchor" line
         echo "  [FAIL] $name — anchor not found"
         FAIL_COUNT=$((FAIL_COUNT + 1))
         return 0
@@ -294,6 +295,7 @@ inject_before() {
     local anchor_line
     anchor_line=$(grep -nF "$anchor" "$file" 2>/dev/null | head -1 | cut -d: -f1)
     if [ -z "$anchor_line" ]; then
+        dump_context "$file" "$anchor" line
         echo "  [FAIL] $name — anchor not found"
         FAIL_COUNT=$((FAIL_COUNT + 1))
         return 0
@@ -320,6 +322,78 @@ inject_before() {
 #   3. 从 { 之后逐行扫描，用类型关键字正则识别变量声明
 #   4. 遇到第一个非声明行停止，在最后一个声明行之后注入
 # 能正确处理 C89 声明必须在代码之前的规则，不依赖任何硬编码锚点。
+
+# 当锚点找不到时，输出目标文件的相关源码上下文，方便直接修复
+# 用法: dump_context file pattern mode
+# mode: func (搜索函数签名) | line (搜索代码行)
+dump_context() {
+    local file="$1"
+    local pattern="$2"
+    local mode="$3"
+
+    echo "  [DUMP] ═══ context from $(basename "$file") ═══"
+
+    case "$mode" in
+        func)
+            # 提取函数名（去掉返回值类型和参数）
+            local func_name
+            func_name=$(echo "$pattern" | sed -E 's/^(static\s+)?(inline\s+)?(const\s+)?(int\s+|void\s+|bool\s+|ssize_t\s+|size_t\s+|long\s+|unsigned\s+|char\s+|u64\s+|u32\s+|s32\s+|struct\s+\w+\s+)?([a-zA-Z_][a-zA-Z0-9_]*)\s*\(.*/\5/')
+            echo "  [DUMP] Searching for function: $func_name"
+            local func_line
+            func_line=$(grep -n "$func_name\s*(" "$file" 2>/dev/null | head -3)
+            if [ -n "$func_line" ]; then
+                echo "  [DUMP] Candidate functions:"
+                echo "$func_line" | while IFS= read -r ln; do
+                    echo "  [DUMP]   $ln"
+                done
+                # 对第一个候选函数输出前30行上下文
+                local first_line
+                first_line=$(echo "$func_line" | head -1 | cut -d: -f1)
+                if [ -n "$first_line" ]; then
+                    echo "  [DUMP] First 30 lines from line $first_line:"
+                    sed -n "${first_line},$((first_line + 30))p" "$file" 2>/dev/null | head -30 | while IFS= read -r ln; do
+                        echo "  [DUMP]   $ln"
+                    done
+                fi
+            else
+                echo "  [DUMP] No function matching '$func_name' found"
+                echo "  [DUMP] First 30 lines of file:"
+                head -30 "$file" 2>/dev/null | while IFS= read -r ln; do
+                    echo "  [DUMP]   $ln"
+                done
+            fi
+            ;;
+        line)
+            # 提取关键字（前几个词）
+            local keyword
+            keyword=$(echo "$pattern" | sed 's/\*/\\*/g' | awk '{print $1, $2, $3}' | sed 's/ $//')
+            echo "  [DUMP] Searching for: $keyword"
+            local matches
+            matches=$(grep -n "$keyword" "$file" 2>/dev/null | head -5)
+            if [ -n "$matches" ]; then
+                echo "  [DUMP] Related lines:"
+                echo "$matches" | while IFS= read -r ln; do
+                    echo "  [DUMP]   $ln"
+                done
+                # 对第一个匹配行输出上下文
+                local first_line
+                first_line=$(echo "$matches" | head -1 | cut -d: -f1)
+                if [ -n "$first_line" ]; then
+                    local start=$((first_line - 5))
+                    [ "$start" -lt 1 ] && start=1
+                    echo "  [DUMP] Context (lines $start-$((first_line + 10))):"
+                    sed -n "${start},$((first_line + 10))p" "$file" 2>/dev/null | while IFS= read -r ln; do
+                        echo "  [DUMP]   $ln"
+                    done
+                fi
+            else
+                echo "  [DUMP] No matches for '$keyword'"
+            fi
+            ;;
+    esac
+    echo "  [DUMP] ═══ end context ═══"
+}
+
 inject_after_decls() {
     local file="$1"
     local func_sig="$2"
@@ -343,6 +417,7 @@ inject_after_decls() {
     local func_line
     func_line=$(grep -n "$func_sig" "$file" 2>/dev/null | head -1 | cut -d: -f1)
     if [ -z "$func_line" ]; then
+        dump_context "$file" "$func_sig" func
         echo "  [FAIL] $name — function not found ($func_sig)"
         FAIL_COUNT=$((FAIL_COUNT + 1))
         return 0
@@ -352,6 +427,7 @@ inject_after_decls() {
     local brace_off
     brace_off=$(tail -n +${func_line} "$file" | grep -n -E '^\{[[:space:]]*$|\)[[:space:]]*\{[[:space:]]*$' | head -1 | cut -d: -f1)
     if [ -z "$brace_off" ]; then
+        dump_context "$file" "$func_sig" func
         echo "  [FAIL] $name — brace not found"
         FAIL_COUNT=$((FAIL_COUNT + 1))
         return 0
