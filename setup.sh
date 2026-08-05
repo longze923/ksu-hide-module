@@ -533,9 +533,10 @@ inject_after_decls() {
 # ===========================================================================
 
 # ===========================================================================
-# [诊断模式] 零注入：以下全部注入点临时停用（定位开机失败来源）
+# [解决方案] 只启用核心隐藏钩子组（进程/线程枚举、挂载、unix/tcp socket）
+# 组1（cmdline/version/selinux）已按用户要求删除；
+# 其余钩子（kallsyms/modules/iomem/新钩子组）保持停用，逐个验证后恢复。
 # ===========================================================================
-if false; then
 
 # --- 1. 进程隐藏 — fs/proc/base.c (proc_pid_readdir) ------------------------
 # Android 5.15 实际源码: ctx->pos = iter.tgid + TGID_OFFSET; (line 6060)
@@ -626,6 +627,11 @@ inject_before "$UNIX_FILE" \
     'unix_seq_show (sun_path hiding)'
 fi
 
+# ===========================================================================
+# [诊断停用] kallsyms + /proc/modules（价值低，待验证后恢复）
+# ===========================================================================
+if false; then
+
 # --- 5. kallsyms 隐藏 — kernel/kallsyms.c -----------------------------------
 # 使用 inject_after_decls 自动适配，不依赖硬编码锚点
 KALLSYMS="${KERNEL_COMMON}/kernel/kallsyms.c"
@@ -657,6 +663,7 @@ inject_before "$MOD_MAIN" \
     'if (ksu_proc_modules_filter(mod->name)) return 0;' \
     'ksu_proc_modules_filter(mod->name)' \
     'modules m_show (module hiding)'
+fi
 
 # --- 7. /proc/stat 伪装 — 5.15 内核中 ctxt/processes/btime 不是局部变量
 #     show_stat() 直接使用 nr_context_switches()/total_forks/boottime.tv_sec
@@ -667,32 +674,12 @@ inject_before "$MOD_MAIN" \
 # 虚拟时源功能按用户要求先停用：不注入 ksu_fake_uptime。
 # 待时间虚拟化方案（syscall 层 + proc 层一致性）确认后再启用。
 
-# --- 9. /proc/cmdline 伪装 — fs/proc/cmdline.c -------------------------------
-# 使用 inject_after_decls 自动适配，不依赖硬编码锚点
-PROC_CMDLINE="${KERNEL_COMMON}/fs/proc/cmdline.c"
-add_extern "$PROC_CMDLINE" \
-    'extern const char *ksu_get_safe_cmdline(void);' \
-    'ksu_get_safe_cmdline(void'
+# --- 9-10. /proc/cmdline + /proc/version 伪装（已按用户要求删除）-----------
 
-inject_after_decls "$PROC_CMDLINE" \
-    'static int cmdline_proc_show(' \
-    'const char *safe = ksu_get_safe_cmdline(); if (safe) { seq_printf(m, "%s", safe); seq_putc(m, 10); return 0; }' \
-    'safe = ksu_get_safe_cmdline()' \
-    'cmdline_proc_show (cmdline spoofing)'
-
-# --- 10. /proc/version 伪装 — fs/proc/version.c ------------------------------
-# 使用 inject_after_decls 自动适配，不依赖硬编码锚点
-PROC_VERSION="${KERNEL_COMMON}/fs/proc/version.c"
-add_extern "$PROC_VERSION" \
-    'extern const char *ksu_get_safe_version(void);' \
-    'ksu_get_safe_version(void'
-
-inject_after_decls "$PROC_VERSION" \
-    'static int version_proc_show(' \
-    'const char *safe_ver = ksu_get_safe_version(); if (safe_ver) { seq_printf(m, "%s", safe_ver); seq_putc(m, 10); return 0; }' \
-    'safe_ver = ksu_get_safe_version()' \
-    'version_proc_show (version spoofing)'
-
+# ===========================================================================
+# [诊断停用] /proc/iomem（root-only，价值低，待验证后恢复）
+# ===========================================================================
+if false; then
 # --- 11. /proc/iomem 隐藏 — kernel/resource.c --------------------------------
 # 使用 inject_after_decls 自动适配，不依赖硬编码锚点
 RESOURCE="${KERNEL_COMMON}/kernel/resource.c"
@@ -711,23 +698,11 @@ inject_code "$RESOURCE" \
     'if (ksu_iomem_line_filter(m->buf + ksu_iomem_start, m->count - ksu_iomem_start)) { m->count = ksu_iomem_start; return 0; }' \
     'ksu_iomem_line_filter(m->buf + ksu_iomem_start' \
     'resource r_show (iomem line filter)'
+fi
 
 # --- 12. kprobes list 隐藏 — 由 ksu_debugfs_cleanup 的 kallsyms 过滤覆盖 ---
 
-# --- 13. SELinux enforce 伪装 — security/selinux/selinuxfs.c -----------------
-# Android 5.15 实际源码: sel_read_enforce 使用 enforcing_enabled(fsi->state)
-# 而非 selinux_state.enforcing；锚点和注入代码都需要改用 fsi->state
-# length = scnprintf(...) 被分成两行，grep -nF 匹配不到，改用 return 行做锚点
-SELINUXFS="${KERNEL_COMMON}/security/selinux/selinuxfs.c"
-add_extern "$SELINUXFS" \
-    'extern int ksu_spoof_enforce(int real_enforce);' \
-    'ksu_spoof_enforce(int'
-
-inject_before "$SELINUXFS" \
-    'return simple_read_from_buffer' \
-    'length = scnprintf(tmpbuf, TMPBUFLEN, "%d", ksu_spoof_enforce(enforcing_enabled(fsi->state)));' \
-    'ksu_spoof_enforce(enforcing_enabled(fsi->state))' \
-    'sel_read_enforce (SELinux spoofing)'
+# --- 13. SELinux enforce 伪装（已按用户要求删除）-----------------------------
 
 # --- 14. /proc/self/attr/current 伪装 — 需要修改 ksu_spoof_selinux_context
 #     为原地修改接口后才能正确注入，暂时跳过
@@ -841,10 +816,6 @@ fi
 
 # --- 22. reboot 隐匿 — 由 ksu_reboot_stealth.c 的 kprobe 实现 ----------------
 # 在模块内注册 __arm64_sys_reboot kprobe，无需内核源码注入。
-fi
-# ===========================================================================
-# [诊断模式结束]
-# ===========================================================================
 
 # ===========================================================================
 # 结果汇总
