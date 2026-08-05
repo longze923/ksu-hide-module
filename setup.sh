@@ -237,12 +237,17 @@ inject_code() {
 }
 
 # ===========================================================================
-# 1. 进程隐藏 — fs/proc/base.c (proc_pid_readdir)
+# 注入规则: add_extern 的 check 用函数签名片段(含参数类型)
+#           inject_code 的 check 用函数调用片段(含实参)
+#           两者不能相同，否则 add_extern 插入 extern 声明后 inject_code
+#           会误判为"已注入"而跳过。
 # ===========================================================================
+
+# --- 1. 进程隐藏 — fs/proc/base.c (proc_pid_readdir) ------------------------
 PROC_BASE="${KERNEL_COMMON}/fs/proc/base.c"
 add_extern "$PROC_BASE" \
     'extern bool ksu_proc_pid_dirent_filter(const char *name, int namelen);' \
-    'ksu_proc_pid_dirent_filter'
+    'ksu_proc_pid_dirent_filter(const char'
 
 inject_code "$PROC_BASE" \
     'dir_emit(ctx, name, len,' \
@@ -250,10 +255,10 @@ inject_code "$PROC_BASE" \
     'ksu_proc_pid_dirent_filter(name, len)' \
     'proc_pid_readdir (PID hiding)'
 
-# 线程枚举过滤 — proc_task_readdir
+# --- 线程枚举过滤 — proc_task_readdir ---------------------------------------
 add_extern "$PROC_BASE" \
     'extern bool ksu_proc_task_dirent_filter(const char *name, int namelen);' \
-    'ksu_proc_task_dirent_filter'
+    'ksu_proc_task_dirent_filter(const char'
 
 inject_code "$PROC_BASE" \
     'proc_task_readdir' \
@@ -261,197 +266,164 @@ inject_code "$PROC_BASE" \
     'ksu_proc_task_dirent_filter(name, len)' \
     'proc_task_readdir (thread hiding)'
 
-# ===========================================================================
-# 2. 挂载隐藏 — fs/proc_namespace.c (show_vfsmnt)
-# ===========================================================================
+# --- 2. 挂载隐藏 — fs/proc_namespace.c (show_vfsmnt) ------------------------
 PROC_NS="${KERNEL_COMMON}/fs/proc_namespace.c"
 add_extern "$PROC_NS" \
     'extern bool ksu_mounts_line_filter(const char *line, size_t len);' \
-    'ksu_mounts_line_filter'
+    'ksu_mounts_line_filter(const char'
 
 inject_code "$PROC_NS" \
     'show_vfsmnt' \
     'if (ksu_mounts_line_filter(seq_buf_str(m->buf), seq_buf_used(m->buf))) return 0;' \
-    'ksu_mounts_line_filter' \
+    'ksu_mounts_line_filter(seq_buf_str' \
     'show_vfsmnt (mounts hiding)'
 
-# ===========================================================================
-# 3. 网络隐藏 — net/unix/af_unix.c
-# ===========================================================================
+# --- 3. 网络隐藏 — net/unix/af_unix.c ---------------------------------------
 UNIX_FILE="${KERNEL_COMMON}/net/unix/af_unix.c"
 add_extern "$UNIX_FILE" \
     'extern bool ksu_net_unix_line_filter(const char *sun_path, struct sock *sk);' \
-    'ksu_net_unix_line_filter'
+    'ksu_net_unix_line_filter(const char'
 
 inject_code "$UNIX_FILE" \
     'unix_seq_show' \
     'if (ksu_net_unix_line_filter(NULL, s)) return 0;' \
-    'ksu_net_unix_line_filter' \
+    'ksu_net_unix_line_filter(NULL' \
     'unix_seq_show (socket hiding)'
 
-# ===========================================================================
-# 4. TCP socket 隐藏 — net/ipv4/tcp_ipv4.c
-# ===========================================================================
+# --- 4. TCP socket 隐藏 — net/ipv4/tcp_ipv4.c -------------------------------
 TCP_FILE="${KERNEL_COMMON}/net/ipv4/tcp_ipv4.c"
 add_extern "$TCP_FILE" \
     'extern bool ksu_net_proc_line_filter(const char *line, struct sock *sk);' \
-    'ksu_net_proc_line_filter'
+    'ksu_net_proc_line_filter(const char'
 
 inject_code "$TCP_FILE" \
     'tcp4_seq_show' \
     'if (ksu_net_proc_line_filter(NULL, sk)) return 0;' \
-    'ksu_net_proc_line_filter' \
+    'ksu_net_proc_line_filter(NULL' \
     'tcp4_seq_show (TCP hiding)'
 
-# ===========================================================================
-# 5. kallsyms 隐藏 — kernel/kallsyms.c
-# ===========================================================================
+# --- 5. kallsyms 隐藏 — kernel/kallsyms.c -----------------------------------
 KALLSYMS="${KERNEL_COMMON}/kernel/kallsyms.c"
 add_extern "$KALLSYMS" \
     'extern bool ksu_kallsyms_filter(const char *sym_name);' \
-    'ksu_kallsyms_filter'
+    'ksu_kallsyms_filter(const char'
 
 inject_code "$KALLSYMS" \
     'static int s_show' \
     'if (ksu_kallsyms_filter(buf)) return 0;' \
-    'ksu_kallsyms_filter' \
+    'ksu_kallsyms_filter(buf)' \
     'kallsyms s_show (symbol hiding)'
 
-# ===========================================================================
-# 6. /proc/modules 隐藏 — kernel/module/main.c
-# ===========================================================================
+# --- 6. /proc/modules 隐藏 — kernel/module/main.c ---------------------------
 MOD_MAIN="${KERNEL_COMMON}/kernel/module/main.c"
 add_extern "$MOD_MAIN" \
     'extern bool ksu_proc_modules_filter(const char *line);' \
-    'ksu_proc_modules_filter'
+    'ksu_proc_modules_filter(const char'
 
 inject_code "$MOD_MAIN" \
     'static int m_show' \
     'if (ksu_proc_modules_filter(buf)) return 0;' \
-    'ksu_proc_modules_filter' \
+    'ksu_proc_modules_filter(buf)' \
     'modules m_show (module hiding)'
 
-# ===========================================================================
-# 7. /proc/stat 伪装 — fs/proc/stat.c
-# ===========================================================================
+# --- 7. /proc/stat 伪装 — fs/proc/stat.c ------------------------------------
 PROC_STAT="${KERNEL_COMMON}/fs/proc/stat.c"
 add_extern "$PROC_STAT" \
     'extern void ksu_fake_proc_stat(unsigned long long *ctxt, unsigned long long *processes, long *btime);' \
-    'ksu_fake_proc_stat'
+    'ksu_fake_proc_stat(unsigned long'
 
 inject_code "$PROC_STAT" \
     'show_stat' \
     'ksu_fake_proc_stat(&ctxt, &processes, &btime);' \
-    'ksu_fake_proc_stat' \
+    'ksu_fake_proc_stat(&ctxt' \
     'show_stat (stat spoofing)'
 
-# ===========================================================================
-# 8. /proc/uptime 伪装 — fs/proc/uptime.c
-# ===========================================================================
+# --- 8. /proc/uptime 伪装 — fs/proc/uptime.c ---------------------------------
 PROC_UPTIME="${KERNEL_COMMON}/fs/proc/uptime.c"
 add_extern "$PROC_UPTIME" \
     'extern void ksu_fake_uptime(u64 *real_sec, u64 *real_nsec, u64 *idle_sec, u64 *idle_nsec);' \
-    'ksu_fake_uptime'
+    'ksu_fake_uptime(u64'
 
 inject_code "$PROC_UPTIME" \
     'uptime_proc_show' \
     'ksu_fake_uptime(&uptime, &idle, &idle, &idle_nsec);' \
-    'ksu_fake_uptime' \
+    'ksu_fake_uptime(&uptime' \
     'uptime_proc_show (uptime spoofing)'
 
-# ===========================================================================
-# 9. /proc/cmdline 伪装 — fs/proc/cmdline.c
-# ===========================================================================
+# --- 9. /proc/cmdline 伪装 — fs/proc/cmdline.c -------------------------------
 PROC_CMDLINE="${KERNEL_COMMON}/fs/proc/cmdline.c"
 add_extern "$PROC_CMDLINE" \
     'extern const char *ksu_get_safe_cmdline(void);' \
-    'ksu_get_safe_cmdline'
+    'ksu_get_safe_cmdline(void'
 
 inject_code "$PROC_CMDLINE" \
     'cmdline_proc_show' \
     'const char *safe = ksu_get_safe_cmdline(); if (safe) { seq_printf(m, "%s\n", safe); return 0; }' \
-    'ksu_get_safe_cmdline' \
+    'safe = ksu_get_safe_cmdline()' \
     'cmdline_proc_show (cmdline spoofing)'
 
-# ===========================================================================
-# 10. /proc/version 伪装 — fs/proc/version.c
-# ===========================================================================
+# --- 10. /proc/version 伪装 — fs/proc/version.c ------------------------------
 PROC_VERSION="${KERNEL_COMMON}/fs/proc/version.c"
 add_extern "$PROC_VERSION" \
     'extern const char *ksu_get_safe_version(void);' \
-    'ksu_get_safe_version'
+    'ksu_get_safe_version(void'
 
 inject_code "$PROC_VERSION" \
     'version_proc_show' \
     'const char *safe_ver = ksu_get_safe_version(); if (safe_ver) { seq_printf(m, "%s\n", safe_ver); return 0; }' \
-    'ksu_get_safe_version' \
+    'safe_ver = ksu_get_safe_version()' \
     'version_proc_show (version spoofing)'
 
-# ===========================================================================
-# 11. /proc/iomem 隐藏 — kernel/resource.c
-# ===========================================================================
+# --- 11. /proc/iomem 隐藏 — kernel/resource.c --------------------------------
 RESOURCE="${KERNEL_COMMON}/kernel/resource.c"
 add_extern "$RESOURCE" \
     'extern bool ksu_iomem_line_filter(const char *line, size_t len);' \
-    'ksu_iomem_line_filter'
+    'ksu_iomem_line_filter(const char'
 
 inject_code "$RESOURCE" \
     'static int r_show' \
     'if (ksu_iomem_line_filter(seq_buf_str(m->buf), seq_buf_used(m->buf))) return 0;' \
-    'ksu_iomem_line_filter' \
+    'ksu_iomem_line_filter(seq_buf_str' \
     'resource r_show (iomem hiding)'
 
-# ===========================================================================
-# 12. kprobes list 隐藏 — 通过 ksu_debugfs_cleanup 的 kallsyms 过滤覆盖
-#     (kprobes list 通过 debugfs 暴露，与 kallsyms 共享符号集合)
-# ===========================================================================
+# --- 12. kprobes list 隐藏 — 由 ksu_debugfs_cleanup 的 kallsyms 过滤覆盖 ---
 
-# ===========================================================================
-# 13. SELinux enforce 伪装 — security/selinux/selinuxfs.c
-# ===========================================================================
+# --- 13. SELinux enforce 伪装 — security/selinux/selinuxfs.c -----------------
 SELINUXFS="${KERNEL_COMMON}/security/selinux/selinuxfs.c"
 add_extern "$SELINUXFS" \
     'extern int ksu_spoof_enforce(int real_enforce);' \
-    'ksu_spoof_enforce'
+    'ksu_spoof_enforce(int'
 
 inject_code "$SELINUXFS" \
     'sel_read_enforce' \
     'enforce = ksu_spoof_enforce(enforce);' \
-    'ksu_spoof_enforce' \
+    'ksu_spoof_enforce(enforce)' \
     'sel_read_enforce (SELinux spoofing)'
 
-# ===========================================================================
-# 14. /proc/self/attr/current 伪装 — fs/proc/base.c (proc_pid_attr_read)
-# ===========================================================================
+# --- 14. /proc/self/attr/current 伪装 — fs/proc/base.c ----------------------
 add_extern "$PROC_BASE" \
     'extern char *ksu_spoof_selinux_context(const char *original);' \
-    'ksu_spoof_selinux_context'
+    'ksu_spoof_selinux_context(const char'
 
 inject_code "$PROC_BASE" \
     'proc_pid_attr_read' \
     'char *spoofed = ksu_spoof_selinux_context(buf); if (spoofed) { len = strlen(spoofed); memcpy(buf, spoofed, len); buf[len] = 0; kfree(spoofed); }' \
-    'ksu_spoof_selinux_context' \
+    'ksu_spoof_selinux_context(buf)' \
     'proc_pid_attr_read (SELinux context spoofing)'
 
-# ===========================================================================
-# 15. /proc/self/status 伪装 — fs/proc/array.c (proc_pid_status)
-# ===========================================================================
+# --- 15. /proc/self/status 伪装 — fs/proc/array.c ----------------------------
 PROC_ARRAY="${KERNEL_COMMON}/fs/proc/array.c"
 add_extern "$PROC_ARRAY" \
     'extern bool ksu_status_line_filter(const char *line, size_t len, char **replacement);' \
-    'ksu_status_line_filter'
+    'ksu_status_line_filter(const char'
 
 inject_code "$PROC_ARRAY" \
     'proc_pid_status' \
     'char *replacement = NULL; if (ksu_status_line_filter(seq_buf_str(m->buf), seq_buf_used(m->buf), &replacement)) { if (replacement) { seq_puts(m, replacement); kfree(replacement); } return 0; }' \
-    'ksu_status_line_filter' \
+    'ksu_status_line_filter(seq_buf_str' \
     'proc_pid_status (status spoofing)'
 
-# ===========================================================================
-# 16. reboot 隐蔽 — 通过 kprobe 劫持 __arm64_sys_reboot
-#     在 ksu_reboot_stealth.c 中已实现频率限制，此处通过 kallsyms
-#     过滤和 debugfs 清理来隐藏 reboot hook 痕迹
-# ===========================================================================
+# --- 16. reboot 隐蔽 — 由 ksu_reboot_stealth.c 的 kprobe 实现 ----------------
 
 # ===========================================================================
 # 结果汇总
