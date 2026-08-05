@@ -550,17 +550,25 @@ inject_code "$PROC_BASE" \
 
 # --- 2. 挂载隐藏 — fs/proc_namespace.c (show_vfsmnt) ------------------------
 # 5.15 内核注意：show_vfsmnt 有 5 个局部变量声明，不能注入在 { 之后
-# 锚点改为第一个执行语句 if (sb->s_op->show_devname)，确保在所有声明之后
+# 方案：函数入口记录 m->count，本行输出完成后只对"本条新增内容"做关键词过滤，
+# 命中则回滚 m->count 并跳过该条。修复旧实现把整个累积缓冲区当一行匹配、
+# 导致一条关键词误删后续所有挂载行的问题。
 PROC_NS="${KERNEL_COMMON}/fs/proc_namespace.c"
 add_extern "$PROC_NS" \
     'extern bool ksu_mounts_line_filter(const char *line, size_t len);' \
     'ksu_mounts_line_filter(const char'
 
+inject_after_decls "$PROC_NS" \
+    'static int show_vfsmnt(' \
+    'size_t ksu_mount_start = m->count;' \
+    'ksu_mount_start = m->count' \
+    'show_vfsmnt (mounts line start)'
+
 inject_before "$PROC_NS" \
-    'if (sb->s_op->show_devname)' \
-    'if (ksu_mounts_line_filter(m->buf, m->count)) return 0;' \
-    'ksu_mounts_line_filter(m->buf' \
-    'show_vfsmnt (mounts hiding)'
+    'seq_puts(m, " 0 0\n")' \
+    'if (!err && ksu_mounts_line_filter(m->buf + ksu_mount_start, m->count - ksu_mount_start)) { m->count = ksu_mount_start; return 0; }' \
+    'ksu_mounts_line_filter(m->buf + ksu_mount_start' \
+    'show_vfsmnt (mounts line filter)'
 
 # --- 3. 网络隐藏 — net/unix/af_unix.c ---------------------------------------
 # s 在 else{} 块内声明，不能用 inject_after_decls（会注入到函数顶导致 s 未声明）
@@ -575,9 +583,9 @@ add_extern "$UNIX_FILE" \
     'ksu_net_unix_line_filter(const char'
 
 inject_code "$UNIX_FILE" \
-    'struct unix_sock *u = unix_sk(s);' \
+    'struct sock *s = v;' \
     'if (ksu_net_proc_line_filter(NULL, s)) return 0;' \
-    'ksu_net_proc_line_filter(NULL' \
+    'ksu_net_proc_line_filter(NULL, s))' \
     'unix_seq_show (socket hiding)'
 
 # --- 4. TCP socket 隐藏 — net/ipv4/tcp_ipv4.c -------------------------------
@@ -589,8 +597,8 @@ add_extern "$TCP_FILE" \
 
 inject_code "$TCP_FILE" \
     'struct sock *sk = v;' \
-    'if (ksu_net_proc_line_filter(NULL, sk)) return 0;' \
-    'ksu_net_proc_line_filter(NULL' \
+    'if (v != SEQ_START_TOKEN && ksu_net_proc_line_filter(NULL, sk)) return 0;' \
+    'ksu_net_proc_line_filter(NULL, sk))' \
     'tcp4_seq_show (TCP hiding)'
 
 # --- 5. kallsyms 隐藏 — kernel/kallsyms.c -----------------------------------
@@ -621,8 +629,8 @@ add_extern "$MOD_MAIN" \
 
 inject_before "$MOD_MAIN" \
     'seq_printf(m, "%s %u"' \
-    'if (ksu_proc_modules_filter(buf)) return 0;' \
-    'ksu_proc_modules_filter(buf)' \
+    'if (ksu_proc_modules_filter(mod->name)) return 0;' \
+    'ksu_proc_modules_filter(mod->name)' \
     'modules m_show (module hiding)'
 
 # --- 7. /proc/stat 伪装 — 5.15 内核中 ctxt/processes/btime 不是局部变量
@@ -631,14 +639,15 @@ inject_before "$MOD_MAIN" \
 # ===========================================================================
 
 # --- 8. /proc/uptime 伪装 — fs/proc/uptime.c ---------------------------------
-# 使用 inject_after_decls 自动适配，不依赖硬编码锚点
+# 必须在 uptime/idle 计算完成后再调用伪装函数，因此注入到 seq_printf 之前；
+# 旧实现注入在函数顶部，读取未初始化的栈变量导致伪装失效。
 PROC_UPTIME="${KERNEL_COMMON}/fs/proc/uptime.c"
 add_extern "$PROC_UPTIME" \
     'extern void ksu_fake_uptime(u64 *real_sec, u64 *real_nsec, u64 *idle_sec, u64 *idle_nsec);' \
     'ksu_fake_uptime(u64'
 
-inject_after_decls "$PROC_UPTIME" \
-    'static int uptime_proc_show(' \
+inject_before "$PROC_UPTIME" \
+    'seq_printf(m, "%lu.%02lu %lu.%02lu\n",' \
     'ksu_fake_uptime((u64 *)&uptime.tv_sec, (u64 *)&uptime.tv_nsec, (u64 *)&idle.tv_sec, &idle_nsec);' \
     'ksu_fake_uptime((u64' \
     'uptime_proc_show (uptime spoofing)'
@@ -652,7 +661,7 @@ add_extern "$PROC_CMDLINE" \
 
 inject_after_decls "$PROC_CMDLINE" \
     'static int cmdline_proc_show(' \
-    'const char *safe = ksu_get_safe_cmdline(); if (safe) { seq_printf(m, "%s\\\\n", safe); return 0; }' \
+    'const char *safe = ksu_get_safe_cmdline(); if (safe) { seq_printf(m, "%s", safe); seq_putc(m, 10); return 0; }' \
     'safe = ksu_get_safe_cmdline()' \
     'cmdline_proc_show (cmdline spoofing)'
 
@@ -665,7 +674,7 @@ add_extern "$PROC_VERSION" \
 
 inject_after_decls "$PROC_VERSION" \
     'static int version_proc_show(' \
-    'const char *safe_ver = ksu_get_safe_version(); if (safe_ver) { seq_printf(m, "%s\\\\n", safe_ver); return 0; }' \
+    'const char *safe_ver = ksu_get_safe_version(); if (safe_ver) { seq_printf(m, "%s", safe_ver); seq_putc(m, 10); return 0; }' \
     'safe_ver = ksu_get_safe_version()' \
     'version_proc_show (version spoofing)'
 
@@ -678,9 +687,15 @@ add_extern "$RESOURCE" \
 
 inject_after_decls "$RESOURCE" \
     'static int r_show(' \
-    'if (ksu_iomem_line_filter(m->buf, m->count)) return 0;' \
-    'ksu_iomem_line_filter(m->buf' \
-    'resource r_show (iomem hiding)'
+    'size_t ksu_iomem_start = m->count;' \
+    'ksu_iomem_start = m->count' \
+    'resource r_show (iomem start)'
+
+inject_code "$RESOURCE" \
+    'r->name ? r->name : "<BAD>");' \
+    'if (ksu_iomem_line_filter(m->buf + ksu_iomem_start, m->count - ksu_iomem_start)) { m->count = ksu_iomem_start; return 0; }' \
+    'ksu_iomem_line_filter(m->buf + ksu_iomem_start' \
+    'resource r_show (iomem line filter)'
 
 # --- 12. kprobes list 隐藏 — 由 ksu_debugfs_cleanup 的 kallsyms 过滤覆盖 ---
 
@@ -695,7 +710,7 @@ add_extern "$SELINUXFS" \
 
 inject_before "$SELINUXFS" \
     'return simple_read_from_buffer' \
-    'if (ksu_spoof_enforce(enforcing_enabled(fsi->state)) == 0) length = scnprintf(tmpbuf, TMPBUFLEN, "%d", 0);' \
+    'length = scnprintf(tmpbuf, TMPBUFLEN, "%d", ksu_spoof_enforce(enforcing_enabled(fsi->state)));' \
     'ksu_spoof_enforce(enforcing_enabled(fsi->state))' \
     'sel_read_enforce (SELinux spoofing)'
 
@@ -703,18 +718,9 @@ inject_before "$SELINUXFS" \
 #     为原地修改接口后才能正确注入，暂时跳过
 # ===========================================================================
 
-# --- 15. /proc/self/status 伪装 — fs/proc/array.c ----------------------------
-# 使用 inject_after_decls 自动适配，不依赖硬编码锚点
-PROC_ARRAY="${KERNEL_COMMON}/fs/proc/array.c"
-add_extern "$PROC_ARRAY" \
-    'extern bool ksu_status_line_filter(const char *line, size_t len, char **replacement);' \
-    'ksu_status_line_filter(const char'
-
-inject_after_decls "$PROC_ARRAY" \
-    'int proc_pid_status(' \
-    'char *replacement = NULL; if (ksu_status_line_filter(m->buf, m->count, &replacement)) { if (replacement) { seq_puts(m, replacement); kfree(replacement); } return 0; }' \
-    'ksu_status_line_filter(m->buf' \
-    'proc_pid_status (status spoofing)'
+# --- 15. /proc/self/status 伪装 (已停用) --------------------------------------
+# 旧注入在 proc_pid_status 函数入口用 (m->buf, m->count) 过滤，此时 m->buf
+# 恒为空，过滤永不生效，只增加额外开销，故移除注入。
 
 # --- 16. reboot 隐蔽 — 由 ksu_reboot_stealth.c 的 kprobe 实现 ----------------
 

