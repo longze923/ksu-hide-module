@@ -183,6 +183,13 @@ EXPORT_SYMBOL_GPL(ksu_is_being_debugged);
  * 任何差异化响应都会暴露"该进程被特殊对待"的侧信道信息。
  */
 
+/* 延迟初始化：在 ksu_caller_trusted() 首次调用时自动完成
+ * 不使用 early_initcall，避免在启动极早期调用 ktime_get_boottime_ns
+ * 可能在某些内核配置下不稳定导致卡米 */
+static bool ksu_auth_initialized;
+static DEFINE_SPINLOCK(ksu_auth_init_lock);
+static void ksu_stealth_core_init_once(void);
+
 bool ksu_caller_trusted(void)
 {
     kuid_t uid;
@@ -282,12 +289,6 @@ EXPORT_SYMBOL_GPL(ksu_stealth_enable_all);
  *  Section G — 初始化
  * ===================================================================
  */
-
-/* 延迟初始化：在 ksu_caller_trusted() 首次调用时自动完成
- * 不使用 early_initcall，避免在启动极早期调用 ktime_get_boottime_ns
- * 可能在某些内核配置下不稳定导致卡米 */
-static bool ksu_auth_initialized;
-static DEFINE_SPINLOCK(ksu_auth_init_lock);
 
 static void ksu_stealth_core_init_once(void)
 {
