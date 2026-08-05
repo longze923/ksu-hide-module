@@ -33,6 +33,7 @@
 #include <linux/pagemap.h>
 #include <linux/version.h>
 #include <linux/hashtable.h>
+#include "ksu_stealth_core.h"
 
 // 外部符号
 extern bool caller_should_see_hidden(void);
@@ -79,11 +80,11 @@ static unsigned int ksu_probe_hash_fn(unsigned long addr, struct mm_struct *mm)
 void ksu_probe_on_madvise_dontneed(unsigned long addr, size_t len,
                                     struct mm_struct *mm)
 {
-    if (!atomic_read(&ksu_hide_ap_ker_enabled)) return;
-
     struct ksu_probe_entry *entry;
     unsigned long flags;
     unsigned int bucket;
+
+    if (!atomic_read(&ksu_hide_ap_ker_enabled)) return;
 
     if (!mm || !addr)
         return;
@@ -207,13 +208,14 @@ EXPORT_SYMBOL_GPL(ksu_safe_user_ptr_check);
 // ---- 清理过期条目（定期调用）----
 void ksu_probe_cleanup_expired(void)
 {
-    if (!atomic_read(&ksu_hide_ap_ker_enabled)) return;
-
     struct ksu_probe_entry *entry;
     struct hlist_node *tmp;
     unsigned long flags;
     int i;
-    u64 now = ksu_get_time_ms();
+    u64 now;
+
+    if (!atomic_read(&ksu_hide_ap_ker_enabled)) return;
+    now = ksu_get_time_ms();
 
     spin_lock_irqsave(&ksu_probe_lock, flags);
     hash_for_each_safe(ksu_probe_hash, i, tmp, entry, node) {
