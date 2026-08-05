@@ -11,6 +11,7 @@
  */
 
 #include <linux/atomic.h>
+#include <linux/module.h>
 
 /* 各子模块开关变量（默认开启） */
 atomic_t ksu_hide_process_enabled    = ATOMIC_INIT(1);
