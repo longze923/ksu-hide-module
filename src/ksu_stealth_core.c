@@ -40,7 +40,8 @@ extern int ksu_get_task_mark(pid_t pid);
 
 /* 全局状态 */
 struct ksu_auth_state ksu_auth;
-atomic_t ksu_stealth_enabled = ATOMIC_INIT(1);
+/* 诊断模式：默认关闭（主开关）。确认模块本身不影响开机后再恢复 1 */
+atomic_t ksu_stealth_enabled = ATOMIC_INIT(0);
 
 /* ===================================================================
  *  时间辅助

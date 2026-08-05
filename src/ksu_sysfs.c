@@ -33,18 +33,19 @@
  *  各模块开关变量 (默认全部开启)
  * =================================================================== */
 
-atomic_t ksu_hide_process_enabled    = ATOMIC_INIT(1);
-atomic_t ksu_hide_proc_pid_enabled   = ATOMIC_INIT(1);
-atomic_t ksu_hide_mounts_enabled     = ATOMIC_INIT(1);
-atomic_t ksu_hide_net_enabled        = ATOMIC_INIT(1);
-atomic_t ksu_hide_selinux_enabled    = ATOMIC_INIT(1);
-atomic_t ksu_hide_status_enabled     = ATOMIC_INIT(1);
-atomic_t ksu_hide_reboot_enabled     = ATOMIC_INIT(1);
-atomic_t ksu_hide_ns_mtime_enabled   = ATOMIC_INIT(1);
-atomic_t ksu_hide_debugfs_enabled    = ATOMIC_INIT(1);
-atomic_t ksu_hide_ap_ker_enabled     = ATOMIC_INIT(1);
-atomic_t ksu_hide_iomem_enabled      = ATOMIC_INIT(1);
-atomic_t ksu_hide_syscall_enabled    = ATOMIC_INIT(1);
+/* 诊断模式：所有子开关默认关闭，仅用于定位开机问题；确认后恢复 1 */
+atomic_t ksu_hide_process_enabled    = ATOMIC_INIT(0);
+atomic_t ksu_hide_proc_pid_enabled   = ATOMIC_INIT(0);
+atomic_t ksu_hide_mounts_enabled     = ATOMIC_INIT(0);
+atomic_t ksu_hide_net_enabled        = ATOMIC_INIT(0);
+atomic_t ksu_hide_selinux_enabled    = ATOMIC_INIT(0);
+atomic_t ksu_hide_status_enabled     = ATOMIC_INIT(0);
+atomic_t ksu_hide_reboot_enabled     = ATOMIC_INIT(0);
+atomic_t ksu_hide_ns_mtime_enabled   = ATOMIC_INIT(0);
+atomic_t ksu_hide_debugfs_enabled    = ATOMIC_INIT(0);
+atomic_t ksu_hide_ap_ker_enabled     = ATOMIC_INIT(0);
+atomic_t ksu_hide_iomem_enabled      = ATOMIC_INIT(0);
+atomic_t ksu_hide_syscall_enabled    = ATOMIC_INIT(0);
 atomic_t ksu_hide_time_virt_enabled  = ATOMIC_INIT(0);
 
 /* 主开关引用 ksu_stealth_core.c 中定义的全局变量 */
