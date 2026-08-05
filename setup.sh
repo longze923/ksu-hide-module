@@ -239,7 +239,7 @@ inject_code() {
     local anchor_text
     anchor_text=$(sed -n "${anchor_line}p" "$file")
     local is_func_sig=0
-    if echo "$anchor_text" | grep -qE '(static\s+)?(int|void|bool|ssize_t|size_t|long|unsigned|struct|const|char|u64|u32|s32|extern|enum)\s'; then
+    if echo "$anchor_text" | grep -qE '(static\s+)?(int|void|bool|ssize_t|size_t|long|unsigned|struct|const|char|u64|u32|s32|extern|enum)\s+\w+\s*\('; then
         is_func_sig=1
     fi
 
@@ -351,13 +351,15 @@ inject_code "$PROC_BASE" \
     'proc_task_readdir (thread hiding) [fallback snprintf]'
 
 # --- 2. 挂载隐藏 — fs/proc_namespace.c (show_vfsmnt) ------------------------
+# 5.15 内核注意：show_vfsmnt 有 5 个局部变量声明，不能注入在 { 之后
+# 锚点改为第一个执行语句 if (sb->s_op->show_devname)，确保在所有声明之后
 PROC_NS="${KERNEL_COMMON}/fs/proc_namespace.c"
 add_extern "$PROC_NS" \
     'extern bool ksu_mounts_line_filter(const char *line, size_t len);' \
     'ksu_mounts_line_filter(const char'
 
-inject_code "$PROC_NS" \
-    'show_vfsmnt' \
+inject_before "$PROC_NS" \
+    'if (sb->s_op->show_devname)' \
     'if (ksu_mounts_line_filter(m->buf, m->count)) return 0;' \
     'ksu_mounts_line_filter(m->buf' \
     'show_vfsmnt (mounts hiding)'
@@ -413,28 +415,25 @@ inject_code "$MOD_MAIN" \
     'ksu_proc_modules_filter(buf)' \
     'modules m_show (module hiding)'
 
-# --- 7. /proc/stat 伪装 — fs/proc/stat.c ------------------------------------
-PROC_STAT="${KERNEL_COMMON}/fs/proc/stat.c"
-add_extern "$PROC_STAT" \
-    'extern void ksu_fake_proc_stat(unsigned long long *ctxt, unsigned long long *processes, long *btime);' \
-    'ksu_fake_proc_stat(unsigned long'
-
-inject_code "$PROC_STAT" \
-    'show_stat' \
-    'ksu_fake_proc_stat(&ctxt, &processes, &btime);' \
-    'ksu_fake_proc_stat(&ctxt' \
-    'show_stat (stat spoofing)'
+# --- 7. /proc/stat 伪装 — 5.15 内核中 ctxt/processes/btime 不是局部变量
+#     show_stat() 直接使用 nr_context_switches()/total_forks/boottime.tv_sec
+#     无法通过指针修改，需要重写注入策略（暂跳过）
+# ===========================================================================
 
 # --- 8. /proc/uptime 伪装 — fs/proc/uptime.c ---------------------------------
+# 5.15 内核注意：
+#   - uptime/idle 是 struct timespec64（不是 u64），需用 .tv_sec/.tv_nsec 字段
+#   - 不存在 idle_nsec 变量（5.15 用 nsec 累计 idle 纳秒）
+#   - 锚点 nsec = 0; 是第一个执行语句，在所有变量声明之后
 PROC_UPTIME="${KERNEL_COMMON}/fs/proc/uptime.c"
 add_extern "$PROC_UPTIME" \
     'extern void ksu_fake_uptime(u64 *real_sec, u64 *real_nsec, u64 *idle_sec, u64 *idle_nsec);' \
     'ksu_fake_uptime(u64'
 
-inject_code "$PROC_UPTIME" \
-    'uptime_proc_show' \
-    'ksu_fake_uptime(&uptime, &idle, &idle, &idle_nsec);' \
-    'ksu_fake_uptime(&uptime' \
+inject_before "$PROC_UPTIME" \
+    'nsec = 0;' \
+    'ksu_fake_uptime((u64 *)&uptime.tv_sec, (u64 *)&uptime.tv_nsec, (u64 *)&idle.tv_sec, (u64 *)&idle.tv_nsec);' \
+    'ksu_fake_uptime((u64' \
     'uptime_proc_show (uptime spoofing)'
 
 # --- 9. /proc/cmdline 伪装 — fs/proc/cmdline.c -------------------------------
@@ -496,13 +495,15 @@ inject_code "$SELINUXFS" \
 # ===========================================================================
 
 # --- 15. /proc/self/status 伪装 — fs/proc/array.c ----------------------------
+# 5.15 内核注意：proc_pid_status 有局部变量声明(struct mm_struct *mm)，
+# 不能注入在 { 之后。锚点改为 task_state(m, ns, pid, task)（第一个函数调用）
 PROC_ARRAY="${KERNEL_COMMON}/fs/proc/array.c"
 add_extern "$PROC_ARRAY" \
     'extern bool ksu_status_line_filter(const char *line, size_t len, char **replacement);' \
     'ksu_status_line_filter(const char'
 
-inject_code "$PROC_ARRAY" \
-    'proc_pid_status' \
+inject_before "$PROC_ARRAY" \
+    'task_state(m, ns, pid, task)' \
     'char *replacement = NULL; if (ksu_status_line_filter(m->buf, m->count, &replacement)) { if (replacement) { seq_puts(m, replacement); kfree(replacement); } return 0; }' \
     'ksu_status_line_filter(m->buf' \
     'proc_pid_status (status spoofing)'
