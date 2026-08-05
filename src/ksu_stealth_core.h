@@ -260,7 +260,8 @@ void ksu_stealth_disable_all(void);
 void ksu_stealth_enable_all(void);
 
 /* ===================================================================
- *  Section 6 — 各子模块独立开关 (由 ksu_sysfs.c 暴露到 /sys/kernel/ksu_hide/)
+ *  Section 6 — 各子模块独立开关 (定义于 ksu_sysfs.c，默认开启；
+ *  原 /sys/kernel/ksu_hide/ 运行时接口已移除)
  * =================================================================== */
 
 extern atomic_t ksu_hide_process_enabled;
