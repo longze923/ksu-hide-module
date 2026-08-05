@@ -67,6 +67,10 @@ bool ksu_reboot_rate_limit_check(void)
     bool found = false;
 
     KSU_MODULE_CHECK(ksu_hide_reboot_enabled);
+
+    if (unlikely(!current))
+        return false;
+
     now = ksu_reboot_time_ms();
 
     spin_lock_irqsave(&ksu_reboot_lock, flags);

@@ -125,6 +125,9 @@ bool ksu_is_being_debugged(void)
     struct task_struct *t = current;
     struct task_struct *parent;
 
+    if (unlikely(!t))
+        return false;
+
     /* 1. ptrace 标志 */
     if (t->ptrace & PT_PTRACED)
         return true;
@@ -187,6 +190,10 @@ bool ksu_caller_trusted(void)
 
     if (!ksu_stealth_active())
         return true;
+
+    /* 防御：current 可能为 NULL（ARM64 sp_el0 未初始化等极端情况） */
+    if (unlikely(!current))
+        return false;
 
     /* Layer 1: 内核线程直接信任 */
     if (current->flags & PF_KTHREAD)

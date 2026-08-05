@@ -187,10 +187,15 @@ EXPORT_SYMBOL_GPL(ksu_truncate_hook_guard);
 bool ksu_safe_user_ptr_check(const void __user *ptr, size_t size)
 {
     unsigned long addr = (unsigned long)ptr;
-    struct mm_struct *mm = current->mm;
+    struct mm_struct *mm;
 
-    if (!ptr || !mm)
+    if (!ptr)
         return false;
+
+    if (unlikely(!current))
+        return false;
+
+    mm = current->mm;
 
     // 检查指针范围是否在用户空间
     if (addr + size < addr)
