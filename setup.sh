@@ -203,6 +203,10 @@ add_extern() {
 }
 
 # 在指定锚点行之后插入代码，并验证
+# 自动检测多行函数签名：
+#   - 如果锚点看起来像函数签名（含类型关键字），在 { 之后插入
+#   - 如果锚点是函数体内的代码，直接在锚点行后插入
+# { 匹配模式：独占一行 ^{$} 或 行末 ) { 形式
 inject_code() {
     local file="$1"
     local anchor="$2"
@@ -222,17 +226,48 @@ inject_code() {
         return 0
     fi
 
-    # 尝试注入
-    if sed -i "/${anchor}/a\\${code}" "$file" 2>/dev/null; then
-        if grep -qF "$check" "$file"; then
-            echo "  [OK]   $name"
-            PASS_COUNT=$((PASS_COUNT + 1))
-            return 0
-        fi
+    # 找到锚点行号
+    local anchor_line
+    anchor_line=$(grep -nF "$anchor" "$file" 2>/dev/null | head -1 | cut -d: -f1)
+    if [ -z "$anchor_line" ]; then
+        echo "  [FAIL] $name — anchor not found"
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+        return 0
     fi
 
-    echo "  [FAIL] $name — anchor not found or injection failed"
-    FAIL_COUNT=$((FAIL_COUNT + 1))
+    # 判断锚点是否像函数签名（含类型关键字或 static 修饰符）
+    local anchor_text
+    anchor_text=$(sed -n "${anchor_line}p" "$file")
+    local is_func_sig=0
+    if echo "$anchor_text" | grep -qE '(static\s+)?(int|void|bool|ssize_t|size_t|long|unsigned|struct|const|char|u64|u32|s32|extern|enum)\s'; then
+        is_func_sig=1
+    fi
+
+    if [ "$is_func_sig" -eq 1 ]; then
+        # 函数签名：找 {（独占一行 或 行末 ) { 形式）
+        local brace_off
+        brace_off=$(tail -n +${anchor_line} "$file" | grep -n -E '^\{[[:space:]]*$|\)[[:space:]]*\{[[:space:]]*$' | head -1 | cut -d: -f1)
+
+        if [ -n "$brace_off" ] && [ "$brace_off" -le 10 ]; then
+            # 在 { 之后插入
+            local insert_line=$((anchor_line + brace_off))
+            sed -i "${insert_line}a\\${code}" "$file"
+        else
+            # 没找到 {，直接插入锚点行后
+            sed -i "${anchor_line}a\\${code}" "$file"
+        fi
+    else
+        # 函数体内锚点：直接插入锚点行后
+        sed -i "${anchor_line}a\\${code}" "$file"
+    fi
+
+    if grep -qF "$check" "$file"; then
+        echo "  [OK]   $name"
+        PASS_COUNT=$((PASS_COUNT + 1))
+    else
+        echo "  [FAIL] $name — injection failed"
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+    fi
     return 0
 }
 
@@ -250,7 +285,7 @@ add_extern "$PROC_BASE" \
     'ksu_proc_pid_dirent_filter(const char'
 
 inject_code "$PROC_BASE" \
-    'dir_emit(ctx, name, len,' \
+    'ctx->pos = iter.tgid' \
     'if (ksu_proc_pid_dirent_filter(name, len)) continue;' \
     'ksu_proc_pid_dirent_filter(name, len)' \
     'proc_pid_readdir (PID hiding)'
@@ -261,7 +296,7 @@ add_extern "$PROC_BASE" \
     'ksu_proc_task_dirent_filter(const char'
 
 inject_code "$PROC_BASE" \
-    'proc_task_readdir' \
+    'ctx->pos = iter.tid' \
     'if (ksu_proc_task_dirent_filter(name, len)) continue;' \
     'ksu_proc_task_dirent_filter(name, len)' \
     'proc_task_readdir (thread hiding)'
@@ -314,8 +349,11 @@ inject_code "$KALLSYMS" \
     'ksu_kallsyms_filter(buf)' \
     'kallsyms s_show (symbol hiding)'
 
-# --- 6. /proc/modules 隐藏 — kernel/module/main.c ---------------------------
+# --- 6. /proc/modules 隐藏 — kernel/module/main.c (5.17+) 或 kernel/module.c (5.15) ---
 MOD_MAIN="${KERNEL_COMMON}/kernel/module/main.c"
+if [ ! -f "$MOD_MAIN" ]; then
+    MOD_MAIN="${KERNEL_COMMON}/kernel/module.c"
+fi
 add_extern "$MOD_MAIN" \
     'extern bool ksu_proc_modules_filter(const char *line);' \
     'ksu_proc_modules_filter(const char'
@@ -400,16 +438,9 @@ inject_code "$SELINUXFS" \
     'ksu_spoof_enforce(enforce)' \
     'sel_read_enforce (SELinux spoofing)'
 
-# --- 14. /proc/self/attr/current 伪装 — fs/proc/base.c ----------------------
-add_extern "$PROC_BASE" \
-    'extern char *ksu_spoof_selinux_context(const char *original);' \
-    'ksu_spoof_selinux_context(const char'
-
-inject_code "$PROC_BASE" \
-    'proc_pid_attr_read' \
-    'char *spoofed = ksu_spoof_selinux_context(buf); if (spoofed) { len = strlen(spoofed); memcpy(buf, spoofed, len); buf[len] = 0; kfree(spoofed); }' \
-    'ksu_spoof_selinux_context(buf)' \
-    'proc_pid_attr_read (SELinux context spoofing)'
+# --- 14. /proc/self/attr/current 伪装 — 需要修改 ksu_spoof_selinux_context
+#     为原地修改接口后才能正确注入，暂时跳过
+# ===========================================================================
 
 # --- 15. /proc/self/status 伪装 — fs/proc/array.c ----------------------------
 PROC_ARRAY="${KERNEL_COMMON}/fs/proc/array.c"
