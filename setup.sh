@@ -194,8 +194,19 @@ add_extern() {
     if grep -qF "$check" "$file" 2>/dev/null; then
         return 0
     fi
+    # 只取文件顶部 include 区的最后一个 #include。
+    # 不能用全文件的最后一个 #include：部分内核文件（如 kernel/signal.c
+    # 的 CONFIG_KGDB_KDB 段）在文件尾部还有 include，会把 extern 插到
+    # 使用它的函数之后，导致 -Werror=implicit-function-declaration。
     local last_inc
-    last_inc=$(grep -n '^#include' "$file" 2>/dev/null | tail -1 | cut -d: -f1)
+    last_inc=$(awk '
+        /^[[:space:]]*#include/ { last = NR; next }
+        /^[[:space:]]*$/ { next }
+        /^[[:space:]]*(\/\*|\*|\/\/)/ { next }
+        /^[[:space:]]*#/ { next }
+        { exit }
+        END { if (last) print last }
+    ' "$file" 2>/dev/null)
     if [ -n "$last_inc" ]; then
         sed -i "${last_inc}a\\${decl}" "$file"
     fi
