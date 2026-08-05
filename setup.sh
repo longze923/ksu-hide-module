@@ -332,7 +332,7 @@ inject_code "$PROC_BASE" \
     'proc_pid_readdir (PID hiding)'
 
 # --- 线程枚举过滤 — proc_task_readdir ---------------------------------------
-# 使用 inject_before 在 dir_emit 之前插入，锚点含 tid（proc_pid_readdir 用 tgid，不会误匹配）
+# 多锚点回退：先尝试 dir_emit，失败则回退到 snprintf
 add_extern "$PROC_BASE" \
     'extern bool ksu_proc_task_dirent_filter(const char *name, int namelen);' \
     'ksu_proc_task_dirent_filter(const char'
@@ -343,6 +343,13 @@ inject_before "$PROC_BASE" \
     'ksu_proc_task_dirent_filter(name, len)' \
     'proc_task_readdir (thread hiding)'
 
+# 回退方案：如果 dir_emit 锚点未找到，尝试 snprintf 锚点（注入在 snprintf 之后）
+inject_code "$PROC_BASE" \
+    'snprintf(name, sizeof(name), "%d", tid)' \
+    'if (ksu_proc_task_dirent_filter(name, len)) continue;' \
+    'ksu_proc_task_dirent_filter(name, len)' \
+    'proc_task_readdir (thread hiding) [fallback snprintf]'
+
 # --- 2. 挂载隐藏 — fs/proc_namespace.c (show_vfsmnt) ------------------------
 PROC_NS="${KERNEL_COMMON}/fs/proc_namespace.c"
 add_extern "$PROC_NS" \
@@ -351,8 +358,8 @@ add_extern "$PROC_NS" \
 
 inject_code "$PROC_NS" \
     'show_vfsmnt' \
-    'if (ksu_mounts_line_filter(seq_buf_str(m->buf), seq_buf_used(m->buf))) return 0;' \
-    'ksu_mounts_line_filter(seq_buf_str' \
+    'if (ksu_mounts_line_filter(m->buf, m->count)) return 0;' \
+    'ksu_mounts_line_filter(m->buf' \
     'show_vfsmnt (mounts hiding)'
 
 # --- 3. 网络隐藏 — net/unix/af_unix.c ---------------------------------------
@@ -455,29 +462,33 @@ inject_code "$PROC_VERSION" \
     'version_proc_show (version spoofing)'
 
 # --- 11. /proc/iomem 隐藏 — kernel/resource.c --------------------------------
+# 5.15 内核注意：不能注入在函数签名后（会与变量声明混合导致 C89 错误）
+# 注入在最后一个变量声明(struct resource *r)之后，确保在所有声明之后
 RESOURCE="${KERNEL_COMMON}/kernel/resource.c"
 add_extern "$RESOURCE" \
     'extern bool ksu_iomem_line_filter(const char *line, size_t len);' \
     'ksu_iomem_line_filter(const char'
 
 inject_code "$RESOURCE" \
-    'static int r_show' \
-    'if (ksu_iomem_line_filter(seq_buf_str(m->buf), seq_buf_used(m->buf))) return 0;' \
-    'ksu_iomem_line_filter(seq_buf_str' \
+    'struct resource *r = v, *p;' \
+    'if (ksu_iomem_line_filter(m->buf, m->count)) return 0;' \
+    'ksu_iomem_line_filter(m->buf' \
     'resource r_show (iomem hiding)'
 
 # --- 12. kprobes list 隐藏 — 由 ksu_debugfs_cleanup 的 kallsyms 过滤覆盖 ---
 
 # --- 13. SELinux enforce 伪装 — security/selinux/selinuxfs.c -----------------
+# 5.15 内核的 sel_read_enforce 无局部 enforce 变量，直接使用 selinux_state.enforcing
+# 策略：在 scnprintf 之后注入，覆盖 tmpbuf 为 spoofed 值
 SELINUXFS="${KERNEL_COMMON}/security/selinux/selinuxfs.c"
 add_extern "$SELINUXFS" \
     'extern int ksu_spoof_enforce(int real_enforce);' \
     'ksu_spoof_enforce(int'
 
 inject_code "$SELINUXFS" \
-    'sel_read_enforce' \
-    'enforce = ksu_spoof_enforce(enforce);' \
-    'ksu_spoof_enforce(enforce)' \
+    'length = scnprintf(tmpbuf, TMPBUFLEN, "%d", selinux_state.enforcing)' \
+    'if (ksu_spoof_enforce(selinux_state.enforcing) == 0) length = scnprintf(tmpbuf, TMPBUFLEN, "%d", 0);' \
+    'ksu_spoof_enforce(selinux_state.enforcing)' \
     'sel_read_enforce (SELinux spoofing)'
 
 # --- 14. /proc/self/attr/current 伪装 — 需要修改 ksu_spoof_selinux_context
@@ -492,8 +503,8 @@ add_extern "$PROC_ARRAY" \
 
 inject_code "$PROC_ARRAY" \
     'proc_pid_status' \
-    'char *replacement = NULL; if (ksu_status_line_filter(seq_buf_str(m->buf), seq_buf_used(m->buf), &replacement)) { if (replacement) { seq_puts(m, replacement); kfree(replacement); } return 0; }' \
-    'ksu_status_line_filter(seq_buf_str' \
+    'char *replacement = NULL; if (ksu_status_line_filter(m->buf, m->count, &replacement)) { if (replacement) { seq_puts(m, replacement); kfree(replacement); } return 0; }' \
+    'ksu_status_line_filter(m->buf' \
     'proc_pid_status (status spoofing)'
 
 # --- 16. reboot 隐蔽 — 由 ksu_reboot_stealth.c 的 kprobe 实现 ----------------
