@@ -487,27 +487,28 @@ inject_before "$PROC_NS" \
     'show_vfsmnt (mounts hiding)'
 
 # --- 3. 网络隐藏 — net/unix/af_unix.c ---------------------------------------
-# 使用 inject_after_decls 自动适配，不依赖硬编码锚点
+# s 在 else{} 块内声明，不能用 inject_after_decls（会注入到函数顶导致 s 未声明）
+# 必须用 inject_code 紧贴 struct sock *s = v; 锚点注入
 UNIX_FILE="${KERNEL_COMMON}/net/unix/af_unix.c"
 add_extern "$UNIX_FILE" \
     'extern bool ksu_net_unix_line_filter(const char *sun_path, struct sock *sk);' \
     'ksu_net_unix_line_filter(const char'
 
-inject_after_decls "$UNIX_FILE" \
-    'static int unix_seq_show(' \
+inject_code "$UNIX_FILE" \
+    'struct sock *s = v;' \
     'if (ksu_net_unix_line_filter(NULL, s)) return 0;' \
     'ksu_net_unix_line_filter(NULL' \
     'unix_seq_show (socket hiding)'
 
 # --- 4. TCP socket 隐藏 — net/ipv4/tcp_ipv4.c -------------------------------
-# 使用 inject_after_decls 自动适配，不依赖硬编码锚点
+# 安全起见用 inject_code 紧贴 struct sock *sk = v; 锚点注入
 TCP_FILE="${KERNEL_COMMON}/net/ipv4/tcp_ipv4.c"
 add_extern "$TCP_FILE" \
     'extern bool ksu_net_proc_line_filter(const char *line, struct sock *sk);' \
     'ksu_net_proc_line_filter(const char'
 
-inject_after_decls "$TCP_FILE" \
-    'static void tcp4_seq_show(' \
+inject_code "$TCP_FILE" \
+    'struct sock *sk = v;' \
     'if (ksu_net_proc_line_filter(NULL, sk)) return 0;' \
     'ksu_net_proc_line_filter(NULL' \
     'tcp4_seq_show (TCP hiding)'
