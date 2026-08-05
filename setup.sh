@@ -320,35 +320,31 @@ inject_before() {
 # ===========================================================================
 
 # --- 1. 进程隐藏 — fs/proc/base.c (proc_pid_readdir) ------------------------
+# Android 5.15 实际源码: ctx->pos = iter.tgid + TGID_OFFSET; (line 6060)
+# 在 snprintf 之后、proc_fill_cache 之前注入过滤逻辑
 PROC_BASE="${KERNEL_COMMON}/fs/proc/base.c"
 add_extern "$PROC_BASE" \
     'extern bool ksu_proc_pid_dirent_filter(const char *name, int namelen);' \
     'ksu_proc_pid_dirent_filter(const char'
 
 inject_code "$PROC_BASE" \
-    'ctx->pos = iter.tgid' \
+    'snprintf(name, sizeof(name), "%u", iter.tgid)' \
     'if (ksu_proc_pid_dirent_filter(name, len)) continue;' \
     'ksu_proc_pid_dirent_filter(name, len)' \
     'proc_pid_readdir (PID hiding)'
 
 # --- 线程枚举过滤 — proc_task_readdir ---------------------------------------
-# 多锚点回退：先尝试 dir_emit，失败则回退到 snprintf
+# Android 5.15 实际源码: 无 dir_emit，使用 snprintf(..., "%u", tid) (line 6681)
+# 在 snprintf 之后、proc_fill_cache 之前注入过滤逻辑
 add_extern "$PROC_BASE" \
     'extern bool ksu_proc_task_dirent_filter(const char *name, int namelen);' \
     'ksu_proc_task_dirent_filter(const char'
 
-inject_before "$PROC_BASE" \
-    'dir_emit(ctx, name, len, tid' \
+inject_code "$PROC_BASE" \
+    'snprintf(name, sizeof(name), "%u", tid)' \
     'if (ksu_proc_task_dirent_filter(name, len)) continue;' \
     'ksu_proc_task_dirent_filter(name, len)' \
     'proc_task_readdir (thread hiding)'
-
-# 回退方案：如果 dir_emit 锚点未找到，尝试 snprintf 锚点（注入在 snprintf 之后）
-inject_code "$PROC_BASE" \
-    'snprintf(name, sizeof(name), "%d", tid)' \
-    'if (ksu_proc_task_dirent_filter(name, len)) continue;' \
-    'ksu_proc_task_dirent_filter(name, len)' \
-    'proc_task_readdir (thread hiding) [fallback snprintf]'
 
 # --- 2. 挂载隐藏 — fs/proc_namespace.c (show_vfsmnt) ------------------------
 # 5.15 内核注意：show_vfsmnt 有 5 个局部变量声明，不能注入在 { 之后
@@ -365,39 +361,45 @@ inject_before "$PROC_NS" \
     'show_vfsmnt (mounts hiding)'
 
 # --- 3. 网络隐藏 — net/unix/af_unix.c ---------------------------------------
+# Android 5.15 实际源码: unix_seq_show() 中 s 在 else{} 块内声明
+# 不能注入在 { 之后（s 未声明），锚点改为 struct sock *s = v;
 UNIX_FILE="${KERNEL_COMMON}/net/unix/af_unix.c"
 add_extern "$UNIX_FILE" \
     'extern bool ksu_net_unix_line_filter(const char *sun_path, struct sock *sk);' \
     'ksu_net_unix_line_filter(const char'
 
 inject_code "$UNIX_FILE" \
-    'unix_seq_show' \
+    'struct sock *s = v;' \
     'if (ksu_net_unix_line_filter(NULL, s)) return 0;' \
     'ksu_net_unix_line_filter(NULL' \
     'unix_seq_show (socket hiding)'
 
 # --- 4. TCP socket 隐藏 — net/ipv4/tcp_ipv4.c -------------------------------
+# Android 5.15 实际源码: tcp4_seq_show() 中 sk 在函数顶部声明
+# 不能注入在 { 之后（sk 未声明），锚点改为 struct sock *sk = v;
 TCP_FILE="${KERNEL_COMMON}/net/ipv4/tcp_ipv4.c"
 add_extern "$TCP_FILE" \
     'extern bool ksu_net_proc_line_filter(const char *line, struct sock *sk);' \
     'ksu_net_proc_line_filter(const char'
 
 inject_code "$TCP_FILE" \
-    'tcp4_seq_show' \
+    'struct sock *sk = v;' \
     'if (ksu_net_proc_line_filter(NULL, sk)) return 0;' \
     'ksu_net_proc_line_filter(NULL' \
     'tcp4_seq_show (TCP hiding)'
 
 # --- 5. kallsyms 隐藏 — kernel/kallsyms.c -----------------------------------
+# Android 5.15 实际源码: s_show() 无 buf 变量，使用 iter->name 直接输出
+# 锚点改为 void *value; (第一个变量声明)，注入使用 iter->name
 KALLSYMS="${KERNEL_COMMON}/kernel/kallsyms.c"
 add_extern "$KALLSYMS" \
     'extern bool ksu_kallsyms_filter(const char *sym_name);' \
     'ksu_kallsyms_filter(const char'
 
 inject_code "$KALLSYMS" \
-    'char buf[KSYM_SYMBOL_LEN];' \
-    'if (ksu_kallsyms_filter(buf)) return 0;' \
-    'ksu_kallsyms_filter(buf)' \
+    'void *value;' \
+    'if (ksu_kallsyms_filter(iter->name)) return 0;' \
+    'ksu_kallsyms_filter(iter->name)' \
     'kallsyms s_show (symbol hiding)'
 
 # --- 6. /proc/modules 隐藏 — kernel/module/main.c (5.17+) 或 kernel/module.c (5.15) ---
@@ -423,18 +425,19 @@ inject_code "$MOD_MAIN" \
 # ===========================================================================
 
 # --- 8. /proc/uptime 伪装 — fs/proc/uptime.c ---------------------------------
-# 5.15 内核注意：
-#   - uptime/idle 是 struct timespec64（不是 u64），需用 .tv_sec/.tv_nsec 字段
-#   - 不存在 idle_nsec 变量（5.15 用 nsec 累计 idle 纳秒）
-#   - 锚点 nsec = 0; 是第一个执行语句，在所有变量声明之后
+# Android 5.15 内核注意：
+#   - Android 内核有 idle_nsec 变量（上游 5.15 没有，是 nsec）
+#   - 第一个执行语句是 idle_nsec = 0;（不是 nsec = 0;）
+#   - uptime/idle 是 struct timespec64，需用 .tv_sec/.tv_nsec 字段 + (u64 *) 强制转换
+#   - idle_nsec 参数直接传 &idle_nsec（已是 u64），函数修改后原代码用 div_u64_rem 拆分
 PROC_UPTIME="${KERNEL_COMMON}/fs/proc/uptime.c"
 add_extern "$PROC_UPTIME" \
     'extern void ksu_fake_uptime(u64 *real_sec, u64 *real_nsec, u64 *idle_sec, u64 *idle_nsec);' \
     'ksu_fake_uptime(u64'
 
 inject_before "$PROC_UPTIME" \
-    'nsec = 0;' \
-    'ksu_fake_uptime((u64 *)&uptime.tv_sec, (u64 *)&uptime.tv_nsec, (u64 *)&idle.tv_sec, (u64 *)&idle.tv_nsec);' \
+    'idle_nsec = 0;' \
+    'ksu_fake_uptime((u64 *)&uptime.tv_sec, (u64 *)&uptime.tv_nsec, (u64 *)&idle.tv_sec, &idle_nsec);' \
     'ksu_fake_uptime((u64' \
     'uptime_proc_show (uptime spoofing)'
 
@@ -466,15 +469,16 @@ inject_before "$PROC_VERSION" \
     'version_proc_show (version spoofing)'
 
 # --- 11. /proc/iomem 隐藏 — kernel/resource.c --------------------------------
-# 5.15 内核注意：不能注入在函数签名后（会与变量声明混合导致 C89 错误）
-# 注入在最后一个变量声明(struct resource *r)之后，确保在所有声明之后
+# 5.15 内核注意：r_show 有 5 个变量声明，最后一个才是 int depth;
+# struct resource *r = v, *p; 后面还有 unsigned long long start, end;
+# int width; int depth; 三个声明，注入在 int depth; 之后确保 C89 合规
 RESOURCE="${KERNEL_COMMON}/kernel/resource.c"
 add_extern "$RESOURCE" \
     'extern bool ksu_iomem_line_filter(const char *line, size_t len);' \
     'ksu_iomem_line_filter(const char'
 
 inject_code "$RESOURCE" \
-    'struct resource *r = v, *p;' \
+    'int depth;' \
     'if (ksu_iomem_line_filter(m->buf, m->count)) return 0;' \
     'ksu_iomem_line_filter(m->buf' \
     'resource r_show (iomem hiding)'
@@ -482,17 +486,17 @@ inject_code "$RESOURCE" \
 # --- 12. kprobes list 隐藏 — 由 ksu_debugfs_cleanup 的 kallsyms 过滤覆盖 ---
 
 # --- 13. SELinux enforce 伪装 — security/selinux/selinuxfs.c -----------------
-# 5.15 内核的 sel_read_enforce 无局部 enforce 变量，直接使用 selinux_state.enforcing
-# 策略：在 scnprintf 之后注入，覆盖 tmpbuf 为 spoofed 值
+# Android 5.15 实际源码: sel_read_enforce 使用 enforcing_enabled(fsi->state)
+# 而非 selinux_state.enforcing；锚点和注入代码都需要改用 fsi->state
 SELINUXFS="${KERNEL_COMMON}/security/selinux/selinuxfs.c"
 add_extern "$SELINUXFS" \
     'extern int ksu_spoof_enforce(int real_enforce);' \
     'ksu_spoof_enforce(int'
 
 inject_code "$SELINUXFS" \
-    'length = scnprintf(tmpbuf, TMPBUFLEN, "%d", selinux_state.enforcing)' \
-    'if (ksu_spoof_enforce(selinux_state.enforcing) == 0) length = scnprintf(tmpbuf, TMPBUFLEN, "%d", 0);' \
-    'ksu_spoof_enforce(selinux_state.enforcing)' \
+    'length = scnprintf(tmpbuf, TMPBUFLEN, "%d", enforcing_enabled(fsi->state))' \
+    'if (ksu_spoof_enforce(enforcing_enabled(fsi->state)) == 0) length = scnprintf(tmpbuf, TMPBUFLEN, "%d", 0);' \
+    'ksu_spoof_enforce(enforcing_enabled(fsi->state))' \
     'sel_read_enforce (SELinux spoofing)'
 
 # --- 14. /proc/self/attr/current 伪装 — 需要修改 ksu_spoof_selinux_context
