@@ -393,7 +393,7 @@ add_extern "$KALLSYMS" \
     'ksu_kallsyms_filter(const char'
 
 inject_code "$KALLSYMS" \
-    'static int s_show' \
+    'char buf[KSYM_SYMBOL_LEN];' \
     'if (ksu_kallsyms_filter(buf)) return 0;' \
     'ksu_kallsyms_filter(buf)' \
     'kallsyms s_show (symbol hiding)'
@@ -408,7 +408,7 @@ add_extern "$MOD_MAIN" \
     'ksu_proc_modules_filter(const char'
 
 inject_code "$MOD_MAIN" \
-    'static int m_show' \
+    'char buf[MODULE_FLAGS_BUF_SIZE];' \
     'if (ksu_proc_modules_filter(buf)) return 0;' \
     'ksu_proc_modules_filter(buf)' \
     'modules m_show (module hiding)'
@@ -445,7 +445,7 @@ add_extern "$PROC_CMDLINE" \
 
 inject_code "$PROC_CMDLINE" \
     'cmdline_proc_show' \
-    'const char *safe = ksu_get_safe_cmdline(); if (safe) { seq_printf(m, "%s\n", safe); return 0; }' \
+    'const char *safe = ksu_get_safe_cmdline(); if (safe) { seq_printf(m, "%s\\n", safe); return 0; }' \
     'safe = ksu_get_safe_cmdline()' \
     'cmdline_proc_show (cmdline spoofing)'
 
@@ -457,7 +457,7 @@ add_extern "$PROC_VERSION" \
 
 inject_code "$PROC_VERSION" \
     'version_proc_show' \
-    'const char *safe_ver = ksu_get_safe_version(); if (safe_ver) { seq_printf(m, "%s\n", safe_ver); return 0; }' \
+    'const char *safe_ver = ksu_get_safe_version(); if (safe_ver) { seq_printf(m, "%s\\n", safe_ver); return 0; }' \
     'safe_ver = ksu_get_safe_version()' \
     'version_proc_show (version spoofing)'
 
