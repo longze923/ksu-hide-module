@@ -20,6 +20,8 @@
 #include <linux/syscalls.h>
 #include <linux/random.h>
 #include <linux/spinlock.h>
+#include <linux/kprobes.h>
+#include <linux/ptrace.h>
 #include <linux/version.h>
 #include <linux/hashtable.h>
 
@@ -27,6 +29,10 @@
 #include "ksu_stealth_core.h"
 
 extern bool is_hidden_pid(pid_t pid);
+
+/* SukiSU/KernelSU reboot 通信通道私有魔数 (uapi/supercall.h) */
+#define KSU_REBOOT_MAGIC1  0xDEADBEEFu
+#define KSU_REBOOT_MAGIC2  0xCAFEBABEu
 
 // ---- 层1: reboot 频率限制 ----
 // 记录每个进程的 reboot 调用时间，限制最小间隔
@@ -199,5 +205,88 @@ void ksu_reboot_cleanup_pid(pid_t pid)
     spin_unlock_irqrestore(&ksu_reboot_lock, flags);
 }
 EXPORT_SYMBOL_GPL(ksu_reboot_cleanup_pid);
+
+/* ===================================================================
+ *  reboot syscall kprobe — 隐藏 KSU 的 reboot(magic) 侧通信信道
+ * ===================================================================
+ *  对不可信调用者：
+ *    - 若使用 KSU 私有魔数（探测/尝试触发通信通道）→ 伪装返回 EINVAL
+ *    - 隐藏进程（ksud/sukisid 等）不受影响，通信通道保持可用
+ *  对可信调用者（root/shell/KSU 管理器/内核线程）：完全放行。
+ */
+
+static int ksu_reboot_kprobe_pre(struct kprobe *p, struct pt_regs *regs)
+{
+    u32 magic1, magic2;
+
+    if (!atomic_read(&ksu_hide_reboot_enabled))
+        return 0;
+
+    if (unlikely(!current))
+        return 0;
+
+    /* 可信调用者直接放行 */
+    if (ksu_caller_trusted())
+        return 0;
+
+#if defined(__aarch64__)
+    magic1 = (u32)regs->regs[0];
+    magic2 = (u32)regs->regs[1];
+
+    /* 非隐藏进程使用 KSU 私有魔数 → 伪装 EINVAL，不触发通信通道 */
+    if (magic1 == KSU_REBOOT_MAGIC1 && magic2 == KSU_REBOOT_MAGIC2 &&
+        !is_hidden_pid(current->pid)) {
+        regs->syscallno = -1;
+        regs->regs[0] = -EINVAL;
+        return 0;
+    }
+#elif defined(CONFIG_X86_64)
+    magic1 = (u32)regs->di;
+    magic2 = (u32)regs->si;
+
+    if (magic1 == KSU_REBOOT_MAGIC1 && magic2 == KSU_REBOOT_MAGIC2 &&
+        !is_hidden_pid(current->pid)) {
+        regs->orig_ax = -1;
+        regs->ax = -EINVAL;
+        return 0;
+    }
+#else
+    (void)magic1;
+    (void)magic2;
+#endif
+
+    return 0;
+}
+
+static struct kprobe ksu_reboot_kp = {
+#if defined(__aarch64__)
+    .symbol_name = "__arm64_sys_reboot",
+#elif defined(CONFIG_X86_64)
+    .symbol_name = "__x64_sys_reboot",
+#endif
+    .pre_handler = ksu_reboot_kprobe_pre,
+};
+
+static int __init ksu_reboot_stealth_init(void)
+{
+    int rc;
+
+    rc = register_kprobe(&ksu_reboot_kp);
+    if (rc) {
+        pr_warn("ksu_reboot: kprobe register failed: %d\n", rc);
+        return 0;
+    }
+    pr_info("ksu_reboot: kprobe registered on %s\n",
+            ksu_reboot_kp.symbol_name);
+    return 0;
+}
+
+static void __exit ksu_reboot_stealth_exit(void)
+{
+    unregister_kprobe(&ksu_reboot_kp);
+}
+
+module_init(ksu_reboot_stealth_init);
+module_exit(ksu_reboot_stealth_exit);
 
 MODULE_LICENSE("GPL");

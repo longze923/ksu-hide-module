@@ -582,9 +582,9 @@ add_extern "$UNIX_FILE" \
     'extern bool ksu_net_unix_line_filter(const char *sun_path, struct sock *sk);' \
     'ksu_net_unix_line_filter(const char'
 
-inject_code "$UNIX_FILE" \
-    'struct sock *s = v;' \
-    'if (ksu_net_proc_line_filter(NULL, s)) return 0;' \
+inject_before "$UNIX_FILE" \
+    'seq_printf(seq, "%pK: %08X %08X %08X %04X %02X %5lu",' \
+    'if (ksu_net_proc_line_filter(NULL, s)) { unix_state_unlock(s); return 0; }' \
     'ksu_net_proc_line_filter(NULL, s))' \
     'unix_seq_show (socket hiding)'
 
@@ -600,6 +600,15 @@ inject_code "$TCP_FILE" \
     'if (v != SEQ_START_TOKEN && ksu_net_proc_line_filter(NULL, sk)) return 0;' \
     'ksu_net_proc_line_filter(NULL, sk))' \
     'tcp4_seq_show (TCP hiding)'
+
+# --- 4b. unix 抽象 socket 名字关键词过滤 (sun_path) --------------------------
+# 在 unix_seq_show 输出 sun_path 之前过滤 @ksud/@suki 等抽象 socket 名。
+# 注：此时 unix_state_lock(s) 已持有，提前返回必须先解锁。
+inject_before "$UNIX_FILE" \
+    'under unix_table_lock here' \
+    'if (u->addr && ksu_net_unix_line_filter(u->addr->name->sun_path, s)) { unix_state_unlock(s); return 0; }' \
+    'ksu_net_unix_line_filter(u->addr' \
+    'unix_seq_show (sun_path hiding)'
 
 # --- 5. kallsyms 隐藏 — kernel/kallsyms.c -----------------------------------
 # 使用 inject_after_decls 自动适配，不依赖硬编码锚点
@@ -638,19 +647,9 @@ inject_before "$MOD_MAIN" \
 #     无法通过指针修改，需要重写注入策略（暂跳过）
 # ===========================================================================
 
-# --- 8. /proc/uptime 伪装 — fs/proc/uptime.c ---------------------------------
-# 必须在 uptime/idle 计算完成后再调用伪装函数，因此注入到 seq_printf 之前；
-# 旧实现注入在函数顶部，读取未初始化的栈变量导致伪装失效。
-PROC_UPTIME="${KERNEL_COMMON}/fs/proc/uptime.c"
-add_extern "$PROC_UPTIME" \
-    'extern void ksu_fake_uptime(u64 *real_sec, u64 *real_nsec, u64 *idle_sec, u64 *idle_nsec);' \
-    'ksu_fake_uptime(u64'
-
-inject_before "$PROC_UPTIME" \
-    'seq_printf(m, "%lu.%02lu %lu.%02lu\n",' \
-    'ksu_fake_uptime((u64 *)&uptime.tv_sec, (u64 *)&uptime.tv_nsec, (u64 *)&idle.tv_sec, &idle_nsec);' \
-    'ksu_fake_uptime((u64' \
-    'uptime_proc_show (uptime spoofing)'
+# --- 8. /proc/uptime 伪装（已停用）------------------------------------------
+# 虚拟时源功能按用户要求先停用：不注入 ksu_fake_uptime。
+# 待时间虚拟化方案（syscall 层 + proc 层一致性）确认后再启用。
 
 # --- 9. /proc/cmdline 伪装 — fs/proc/cmdline.c -------------------------------
 # 使用 inject_after_decls 自动适配，不依赖硬编码锚点
@@ -718,11 +717,110 @@ inject_before "$SELINUXFS" \
 #     为原地修改接口后才能正确注入，暂时跳过
 # ===========================================================================
 
-# --- 15. /proc/self/status 伪装 (已停用) --------------------------------------
-# 旧注入在 proc_pid_status 函数入口用 (m->buf, m->count) 过滤，此时 m->buf
-# 恒为空，过滤永不生效，只增加额外开销，故移除注入。
+# --- 15. /proc/self/status 伪装 (TracerPid / CapEff) — fs/proc/array.c ------
+# 在 proc_pid_status 返回前对整段缓冲区做逐行过滤（原地压缩），
+# 非零 TracerPid 伪装为 0、全 f CapEff 伪装为 0。
+PROC_ARRAY="${KERNEL_COMMON}/fs/proc/array.c"
+add_extern "$PROC_ARRAY" \
+    'extern void ksu_status_buffer_filter(char *buf, size_t *count);' \
+    'ksu_status_buffer_filter(char'
 
-# --- 16. reboot 隐蔽 — 由 ksu_reboot_stealth.c 的 kprobe 实现 ----------------
+inject_code "$PROC_ARRAY" \
+    'task_context_switch_counts(m, task);' \
+    'ksu_status_buffer_filter(m->buf, &m->count);' \
+    'ksu_status_buffer_filter(m->buf' \
+    'proc_pid_status (status spoofing)'
+
+# --- 16. /proc/<pid>/comm 伪装 — fs/proc/base.c (comm_show) -----------------
+add_extern "$PROC_BASE" \
+    'extern bool ksu_comm_spoof(pid_t pid, char *comm, size_t comm_len);' \
+    'ksu_comm_spoof(pid_t'
+
+inject_before "$PROC_BASE" \
+    'proc_task_name(m, p, false);' \
+    '{ char ksu_comm_buf[TASK_COMM_LEN]; pid_t ksu_pid = p->pid; if (ksu_comm_spoof(ksu_pid, ksu_comm_buf, sizeof(ksu_comm_buf))) { seq_puts(m, ksu_comm_buf); seq_putc(m, 10); put_task_struct(p); return 0; } }' \
+    'ksu_comm_spoof(ksu_pid' \
+    'comm_show (comm spoofing)'
+
+# --- 17. /proc/<pid>/wchan 伪装 — fs/proc/base.c (proc_pid_wchan) ------------
+add_extern "$PROC_BASE" \
+    'extern bool ksu_wchan_filter(const char *wchan_name, size_t len);' \
+    'ksu_wchan_filter(const char'
+
+add_extern "$PROC_BASE" \
+    'extern void ksu_wchan_spoof(char *out, size_t outsz);' \
+    'ksu_wchan_spoof(char'
+
+inject_before "$PROC_BASE" \
+    'seq_puts(m, symname);' \
+    '{ char ksu_wchan_buf[KSYM_NAME_LEN]; size_t ksu_wchan_len = strnlen(symname, sizeof(symname)); if (ksu_wchan_filter(symname, ksu_wchan_len)) { ksu_wchan_spoof(ksu_wchan_buf, sizeof(ksu_wchan_buf)); seq_puts(m, ksu_wchan_buf); return 0; } }' \
+    'ksu_wchan_filter(symname' \
+    'proc_pid_wchan (wchan spoofing)'
+
+# --- 18. kill/tgkill 探测防御 — kernel/signal.c ------------------------------
+# 在 syscall 实现入口注入过滤，命中隐藏进程返回 -ESRCH。
+SIGNAL_FILE="${KERNEL_COMMON}/kernel/signal.c"
+add_extern "$SIGNAL_FILE" \
+    'extern int ksu_hidden_kill_filter(pid_t pid, int sig);' \
+    'ksu_hidden_kill_filter(pid_t'
+
+add_extern "$SIGNAL_FILE" \
+    'extern int ksu_hidden_tgkill_filter(pid_t tgid, pid_t pid, int sig);' \
+    'ksu_hidden_tgkill_filter(pid_t'
+
+inject_before "$SIGNAL_FILE" \
+    'prepare_kill_siginfo(sig, &info);' \
+    '{ int ksu_kill_ret = ksu_hidden_kill_filter(pid, sig); if (ksu_kill_ret) return ksu_kill_ret; }' \
+    'ksu_hidden_kill_filter(pid, sig)' \
+    'sys_kill (kill probing defense)'
+
+inject_before "$SIGNAL_FILE" \
+    'if (pid <= 0 || tgid <= 0)' \
+    '{ int ksu_tg_ret = ksu_hidden_tgkill_filter(tgid, pid, sig); if (ksu_tg_ret) return ksu_tg_ret; }' \
+    'ksu_hidden_tgkill_filter(tgid, pid, sig)' \
+    'sys_tgkill (tgkill probing defense)'
+
+# --- 19. pidfd_open 探测防御 — kernel/pid.c ----------------------------------
+PID_FILE="${KERNEL_COMMON}/kernel/pid.c"
+add_extern "$PID_FILE" \
+    'extern int ksu_hidden_pidfd_filter(pid_t pid, unsigned int flags);' \
+    'ksu_hidden_pidfd_filter(pid_t'
+
+inject_before "$PID_FILE" \
+    'if (flags & ~PIDFD_NONBLOCK)' \
+    '{ int ksu_pfd_ret = ksu_hidden_pidfd_filter(pid, flags); if (ksu_pfd_ret) return ksu_pfd_ret; }' \
+    'ksu_hidden_pidfd_filter(pid, flags)' \
+    'sys_pidfd_open (pidfd probing defense)'
+
+# --- 20. namespace mtime 对齐 — fs/libfs.c (simple_getattr) ------------------
+# nsfs inode 使用 simple_getattr，注入后由 ksu_ns_align_mtime 内部按
+# NSFS_MAGIC 过滤，仅对齐 namespace inode 的 mtime。
+LIBFS="${KERNEL_COMMON}/fs/libfs.c"
+add_extern "$LIBFS" \
+    'extern bool ksu_ns_align_mtime(struct kstat *stat, struct inode *inode);' \
+    'ksu_ns_align_mtime(struct kstat'
+
+inject_code "$LIBFS" \
+    'generic_fillattr(&init_user_ns, inode, stat);' \
+    'ksu_ns_align_mtime(stat, inode);' \
+    'ksu_ns_align_mtime(stat, inode)' \
+    'simple_getattr (ns mtime align)'
+
+# --- 21. clock_gettime 一致性检查 — kernel/time/posix-timers.c --------------
+# 仅为后续时间虚拟化提供一致性检查钩子；当前不伪造任何时间值。
+POSIX_TIMERS="${KERNEL_COMMON}/kernel/time/posix-timers.c"
+add_extern "$POSIX_TIMERS" \
+    'extern void ksu_check_clock_consistency(const clockid_t which_clock, struct timespec64 *ts);' \
+    'ksu_check_clock_consistency(const clockid_t'
+
+inject_code "$POSIX_TIMERS" \
+    'error = kc->clock_get_timespec(which_clock, &kernel_tp);' \
+    'ksu_check_clock_consistency(which_clock, &kernel_tp);' \
+    'ksu_check_clock_consistency(which_clock' \
+    'clock_gettime (clock consistency)'
+
+# --- 22. reboot 隐匿 — 由 ksu_reboot_stealth.c 的 kprobe 实现 ----------------
+# 在模块内注册 __arm64_sys_reboot kprobe，无需内核源码注入。
 
 # ===========================================================================
 # 结果汇总

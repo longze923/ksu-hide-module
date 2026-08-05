@@ -131,6 +131,61 @@ bool ksu_status_line_filter(const char *line, size_t len, char **replacement)
 }
 EXPORT_SYMBOL_GPL(ksu_status_line_filter);
 
+/* ---- 2b. 整段 status 缓冲区逐行过滤（原地压缩） ----
+ *
+ * 在 proc_pid_status 输出完成后、返回前调用：
+ * 对 m->buf[0..*count) 逐行执行 ksu_status_line_filter，
+ * 需要替换的行写入 replacement，无需替换的行原样保留，
+ * 最后更新 *count 为压缩后的长度（seq_file 只输出 count 内的内容）。
+ */
+void ksu_status_buffer_filter(char *buf, size_t *count)
+{
+    size_t src = 0;
+    size_t dst = 0;
+
+    if (!buf || !count)
+        return;
+
+    if (!atomic_read(&ksu_hide_status_enabled))
+        return;
+
+    if (caller_should_see_hidden())
+        return;
+
+    while (src < *count) {
+        size_t eol = src;
+        size_t line_len;
+        char *replacement = NULL;
+        bool filtered;
+
+        while (eol < *count && buf[eol] != '\n')
+            eol++;
+        if (eol < *count)
+            eol++; /* 包含换行符 */
+
+        line_len = eol - src;
+        filtered = ksu_status_line_filter(buf + src, line_len, &replacement);
+
+        if (filtered) {
+            if (replacement) {
+                size_t rlen = strlen(replacement);
+                memmove(buf + dst, replacement, rlen);
+                dst += rlen;
+                kfree(replacement);
+            }
+            /* filtered 且无 replacement → 整行丢弃 */
+        } else {
+            memmove(buf + dst, buf + src, line_len);
+            dst += line_len;
+        }
+
+        src = eol;
+    }
+
+    *count = dst;
+}
+EXPORT_SYMBOL_GPL(ksu_status_buffer_filter);
+
 // ---- 3. /proc/<pid>/stat 字段伪装 ----
 // 隐藏进程的 CPU 时间保留真实值，避免与 /proc/stat 总量不对称
 // 只伪装 num_threads（隐藏多线程 daemon 的真实线程数）

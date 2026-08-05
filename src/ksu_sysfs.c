@@ -45,7 +45,7 @@ atomic_t ksu_hide_debugfs_enabled    = ATOMIC_INIT(1);
 atomic_t ksu_hide_ap_ker_enabled     = ATOMIC_INIT(1);
 atomic_t ksu_hide_iomem_enabled      = ATOMIC_INIT(1);
 atomic_t ksu_hide_syscall_enabled    = ATOMIC_INIT(1);
-atomic_t ksu_hide_time_virt_enabled  = ATOMIC_INIT(1);
+atomic_t ksu_hide_time_virt_enabled  = ATOMIC_INIT(0);
 
 /* 主开关引用 ksu_stealth_core.c 中定义的全局变量 */
 extern atomic_t ksu_stealth_enabled;
