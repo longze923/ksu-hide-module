@@ -188,7 +188,8 @@ add_extern() {
     local check="$3"
 
     if [ ! -f "$file" ]; then
-        return 1
+        echo "  [WARN] add_extern: file not found, skipping: $file"
+        return 0
     fi
     if grep -qF "$check" "$file" 2>/dev/null; then
         return 0
@@ -212,7 +213,7 @@ inject_code() {
     if [ ! -f "$file" ]; then
         echo "  [MISS] $name — file not found: $file"
         FAIL_COUNT=$((FAIL_COUNT + 1))
-        return 1
+        return 0
     fi
 
     if grep -qF "$check" "$file" 2>/dev/null; then
@@ -232,7 +233,7 @@ inject_code() {
 
     echo "  [FAIL] $name — anchor not found or injection failed"
     FAIL_COUNT=$((FAIL_COUNT + 1))
-    return 1
+    return 0
 }
 
 # ===========================================================================
