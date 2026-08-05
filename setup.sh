@@ -249,8 +249,8 @@ inject_code() {
         brace_off=$(tail -n +${anchor_line} "$file" | grep -n -E '^\{[[:space:]]*$|\)[[:space:]]*\{[[:space:]]*$' | head -1 | cut -d: -f1)
 
         if [ -n "$brace_off" ] && [ "$brace_off" -le 10 ]; then
-            # 在 { 之后插入
-            local insert_line=$((anchor_line + brace_off))
+            # 在 { 之后插入 (brace_off 从 tail+grep 输出，1-indexed)
+            local insert_line=$((anchor_line + brace_off - 1))
             sed -i "${insert_line}a\\${code}" "$file"
         else
             # 没找到 {，直接插入锚点行后
@@ -403,8 +403,10 @@ inject_code "$KALLSYMS" \
     'kallsyms s_show (symbol hiding)'
 
 # --- 6. /proc/modules 隐藏 — kernel/module/main.c (5.17+) 或 kernel/module.c (5.15) ---
-# 5.15 内核注意：m_show 有 void *value 声明在 char buf 之后，
-# 注入在 char buf 之后会与 void *value 声明混合，改为注入在 void *value 之后
+# 5.15 内核注意：KSU/SUSFS 补丁会在 m_show 中添加 void *value; 声明
+# 且该声明位于 We always ignore unformed modules 注释之后，
+# 因此不能使用注释作为锚点。改用 seq_printf(m, "%s %u" 作为锚点，
+# 在所有声明之后、模块信息输出之前注入过滤逻辑。
 MOD_MAIN="${KERNEL_COMMON}/kernel/module/main.c"
 if [ ! -f "$MOD_MAIN" ]; then
     MOD_MAIN="${KERNEL_COMMON}/kernel/module.c"
@@ -413,8 +415,8 @@ add_extern "$MOD_MAIN" \
     'extern bool ksu_proc_modules_filter(const char *line);' \
     'ksu_proc_modules_filter(const char'
 
-inject_code "$MOD_MAIN" \
-    'void *value;' \
+inject_before "$MOD_MAIN" \
+    'seq_printf(m, "%s %u"' \
     'if (ksu_proc_modules_filter(buf)) return 0;' \
     'ksu_proc_modules_filter(buf)' \
     'modules m_show (module hiding)'
@@ -442,29 +444,28 @@ inject_before "$PROC_UPTIME" \
     'uptime_proc_show (uptime spoofing)'
 
 # --- 9. /proc/cmdline 伪装 — fs/proc/cmdline.c -------------------------------
-# Android 内核可能有额外声明，不能注入在 { 之后
-# 锚点改为 saved_command_line（第一个 seq_printf 的参数，唯一）
+# 使用 inject_code + 函数签名锚点，注入在 { 之后（KSU 代码之前）
 PROC_CMDLINE="${KERNEL_COMMON}/fs/proc/cmdline.c"
 add_extern "$PROC_CMDLINE" \
     'extern const char *ksu_get_safe_cmdline(void);' \
     'ksu_get_safe_cmdline(void'
 
-inject_before "$PROC_CMDLINE" \
-    'saved_command_line' \
-    'const char *safe = ksu_get_safe_cmdline(); if (safe) { seq_printf(m, "%s\\n", safe); return 0; }' \
+inject_code "$PROC_CMDLINE" \
+    'static int cmdline_proc_show(' \
+    'const char *safe = ksu_get_safe_cmdline(); if (safe) { seq_printf(m, "%s\\\\n", safe); return 0; }' \
     'safe = ksu_get_safe_cmdline()' \
     'cmdline_proc_show (cmdline spoofing)'
 
 # --- 10. /proc/version 伪装 — fs/proc/version.c ------------------------------
-# 同样改用 inject_before，锚点改为 linux_proc_banner（第一个 seq_printf 的参数）
+# 使用 inject_code + 函数签名锚点，注入在 { 之后（KSU 代码之前）
 PROC_VERSION="${KERNEL_COMMON}/fs/proc/version.c"
 add_extern "$PROC_VERSION" \
     'extern const char *ksu_get_safe_version(void);' \
     'ksu_get_safe_version(void'
 
-inject_before "$PROC_VERSION" \
-    'linux_proc_banner' \
-    'const char *safe_ver = ksu_get_safe_version(); if (safe_ver) { seq_printf(m, "%s\\n", safe_ver); return 0; }' \
+inject_code "$PROC_VERSION" \
+    'static int version_proc_show(' \
+    'const char *safe_ver = ksu_get_safe_version(); if (safe_ver) { seq_printf(m, "%s\\\\n", safe_ver); return 0; }' \
     'safe_ver = ksu_get_safe_version()' \
     'version_proc_show (version spoofing)'
 
