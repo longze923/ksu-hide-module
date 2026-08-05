@@ -59,14 +59,15 @@ static unsigned int ksu_reboot_hash_fn(pid_t pid)
 // 返回 true = 允许，false = 应静默返回 EINVAL（不触发实际逻辑）
 bool ksu_reboot_rate_limit_check(void)
 {
-    KSU_MODULE_CHECK(ksu_hide_reboot_enabled);
-
     struct ksu_reboot_tracker *entry;
     unsigned long flags;
     unsigned int bucket;
-    u64 now = ksu_reboot_time_ms();
+    u64 now;
     bool allowed = true;
     bool found = false;
+
+    KSU_MODULE_CHECK(ksu_hide_reboot_enabled);
+    now = ksu_reboot_time_ms();
 
     spin_lock_irqsave(&ksu_reboot_lock, flags);
     bucket = ksu_reboot_hash_fn(current->pid);

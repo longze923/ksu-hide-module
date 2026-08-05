@@ -25,6 +25,7 @@
 #include <linux/nsproxy.h>
 #include <linux/proc_ns.h>
 #include <linux/version.h>
+#include "ksu_stealth_core.h"
 
 // 外部符号
 extern bool caller_should_see_hidden(void);
