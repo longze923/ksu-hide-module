@@ -170,6 +170,47 @@ for opt in "${CONFIG_OPTIONS[@]}"; do
 done
 
 # ============================================================================
+# [6.5/7] DEBUG: 输出注入目标函数的源码，用于确认锚点
+# ============================================================================
+echo ""
+echo "[6.5/7] DEBUG: Dumping target function sources..."
+echo "================================================"
+DUMP_FUNC() {
+    local file="$1" func="$2"
+    if [ ! -f "$file" ]; then
+        echo "  [MISS] $file"
+        return
+    fi
+    echo ""
+    echo "===== $file ($func) ====="
+    local start
+    start=$(grep -n "$func" "$file" 2>/dev/null | head -1 | cut -d: -f1)
+    if [ -z "$start" ]; then
+        echo "  (function not found)"
+    else
+        sed -n "${start},+50p" "$file"
+    fi
+    echo "===== END ====="
+}
+
+DUMP_FUNC "${KERNEL_COMMON}/fs/proc/base.c" 'proc_pid_readdir'
+DUMP_FUNC "${KERNEL_COMMON}/fs/proc/base.c" 'proc_task_readdir'
+DUMP_FUNC "${KERNEL_COMMON}/fs/proc_namespace.c" 'show_vfsmnt'
+DUMP_FUNC "${KERNEL_COMMON}/net/unix/af_unix.c" 'unix_seq_show'
+DUMP_FUNC "${KERNEL_COMMON}/net/ipv4/tcp_ipv4.c" 'tcp4_seq_show'
+DUMP_FUNC "${KERNEL_COMMON}/kernel/kallsyms.c" 'static int s_show'
+DUMP_FUNC "${KERNEL_COMMON}/kernel/module.c" 'static int m_show'
+DUMP_FUNC "${KERNEL_COMMON}/fs/proc/uptime.c" 'uptime_proc_show'
+DUMP_FUNC "${KERNEL_COMMON}/fs/proc/cmdline.c" 'cmdline_proc_show'
+DUMP_FUNC "${KERNEL_COMMON}/fs/proc/version.c" 'version_proc_show'
+DUMP_FUNC "${KERNEL_COMMON}/kernel/resource.c" 'static int r_show'
+DUMP_FUNC "${KERNEL_COMMON}/security/selinux/selinuxfs.c" 'sel_read_enforce'
+DUMP_FUNC "${KERNEL_COMMON}/fs/proc/array.c" 'proc_pid_status'
+
+echo "================================================"
+echo ""
+
+# ============================================================================
 # [7/7] 注入调用点 — 将导出函数挂到内核路径
 # ============================================================================
 echo ""
