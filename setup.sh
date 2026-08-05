@@ -571,9 +571,9 @@ add_extern "$UNIX_FILE" \
     'ksu_net_unix_line_filter(const char'
 
 inject_code "$UNIX_FILE" \
-    'struct sock *s = v;' \
-    'if (ksu_net_unix_line_filter(NULL, s)) return 0;' \
-    'ksu_net_unix_line_filter(NULL' \
+    'struct unix_sock *u = unix_sk(s);' \
+    'if (ksu_net_proc_line_filter(NULL, s)) return 0;' \
+    'ksu_net_proc_line_filter(NULL' \
     'unix_seq_show (socket hiding)'
 
 # --- 4. TCP socket 隐藏 — net/ipv4/tcp_ipv4.c -------------------------------
@@ -683,13 +683,14 @@ inject_after_decls "$RESOURCE" \
 # --- 13. SELinux enforce 伪装 — security/selinux/selinuxfs.c -----------------
 # Android 5.15 实际源码: sel_read_enforce 使用 enforcing_enabled(fsi->state)
 # 而非 selinux_state.enforcing；锚点和注入代码都需要改用 fsi->state
+# length = scnprintf(...) 被分成两行，grep -nF 匹配不到，改用 return 行做锚点
 SELINUXFS="${KERNEL_COMMON}/security/selinux/selinuxfs.c"
 add_extern "$SELINUXFS" \
     'extern int ksu_spoof_enforce(int real_enforce);' \
     'ksu_spoof_enforce(int'
 
-inject_code "$SELINUXFS" \
-    'length = scnprintf(tmpbuf, TMPBUFLEN, "%d", enforcing_enabled(fsi->state))' \
+inject_before "$SELINUXFS" \
+    'return simple_read_from_buffer' \
     'if (ksu_spoof_enforce(enforcing_enabled(fsi->state)) == 0) length = scnprintf(tmpbuf, TMPBUFLEN, "%d", 0);' \
     'ksu_spoof_enforce(enforcing_enabled(fsi->state))' \
     'sel_read_enforce (SELinux spoofing)'
