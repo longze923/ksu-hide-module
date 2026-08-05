@@ -77,7 +77,7 @@ bool ksu_ns_align_mtime(struct kstat *stat, struct inode *inode)
     if (!stat || !inode)
         return false;
 
-    /* 只处理 namespace inode（/proc/<pid>/ns/* 指向 nsfs），
+    /* 只处理 namespace inode（/proc/pid/ns 目录指向 nsfs），
      * 避免影响所有走 simple_getattr 的普通文件 */
     if (inode->i_sb->s_magic != NSFS_MAGIC)
         return false;
