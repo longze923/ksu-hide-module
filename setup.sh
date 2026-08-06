@@ -869,8 +869,8 @@ inject_after_decls "$INET_DIAG" \
 
 inject_after_decls "$INET_DIAG" \
     'int inet_sk_diag_fill(' \
-    'if (ksu_diag_should_skip_sock(sk)) return 0;' \
-    'ksu_diag_should_skip_sock(sk)) return 0' \
+    '{ if (ksu_diag_should_skip_sock(sk)) return 0; }' \
+    '{ if (ksu_diag_should_skip_sock(sk))' \
     'inet_sk_diag_fill (sock_diag skip listen)'
 
 UNIX_DIAG="${KERNEL_COMMON}/net/unix/diag.c"
