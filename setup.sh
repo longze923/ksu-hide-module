@@ -923,6 +923,25 @@ inject_code "$FTRACE" \
     'ksu_tracing_line_filter(m->buf' \
     't_show (tracing line filter)'
 
+# --- 27. SukiSU reboot 魔数侧信道拦截 — drivers/kernelsu/supercall/supercall.c
+# SukiSU 在 __arm64_sys_reboot 挂了无信任检查的 kprobe：任何进程带
+# KSU 魔数调 reboot 都会调度 fd 安装（侧信道）。这里在 reboot_handler_pre
+# 入口加早退：uid>=10000 的不可信调用者直接 return 0，不触发侧信道。
+# ksud(root) 与系统进程(uid<10000)不受影响。
+SUPERCALL="${KERNEL_COMMON}/drivers/kernelsu/supercall/supercall.c"
+
+inject_code "$SUPERCALL" \
+    '#include <linux/anon_inodes.h>' \
+    '#include <linux/cred.h>' \
+    '#include <linux/cred.h>' \
+    'supercall include cred'
+
+inject_after_decls "$SUPERCALL" \
+    'static int reboot_handler_pre(' \
+    'if (current_uid().val >= 10000) return 0;' \
+    'current_uid().val >= 10000' \
+    'reboot_handler_pre (block untrusted reboot magic)'
+
 # ===========================================================================
 # 结果汇总
 # ===========================================================================
