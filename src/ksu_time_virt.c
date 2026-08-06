@@ -288,7 +288,7 @@ EXPORT_SYMBOL_GPL(ksu_fake_proc_stat);
 void ksu_check_clock_consistency(const clockid_t which_clock,
                                  struct timespec64 *ts)
 {
-    if (!atomic_read(&ksu_hide_time_virt_enabled))
+    if (!atomic_read(&ksu_hide_clock_check_enabled))
         return;
 
     if (ksu_caller_trusted())

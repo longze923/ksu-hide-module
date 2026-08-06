@@ -277,6 +277,7 @@ extern atomic_t ksu_hide_ap_ker_enabled;
 extern atomic_t ksu_hide_iomem_enabled;
 extern atomic_t ksu_hide_syscall_enabled;
 extern atomic_t ksu_hide_time_virt_enabled;
+extern atomic_t ksu_hide_clock_check_enabled;
 
 /* 便捷宏：如果模块开关关闭，直接返回默认值（不隐藏） */
 #define KSU_MODULE_CHECK(sw)  if (!atomic_read(&(sw))) return false
