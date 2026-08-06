@@ -37,7 +37,10 @@ extern bool caller_should_see_hidden(void);
 // ---- 通用判定：该 socket 是否应被隐藏 ----
 static bool should_hide_sock(struct sock *sk)
 {
-    pid_t pid;
+    struct socket *sock;
+    struct file *file;
+    pid_t pid = 0;
+    bool hidden = false;
 
     KSU_MODULE_CHECK(ksu_hide_net_enabled);
 
@@ -53,19 +56,40 @@ static bool should_hide_sock(struct sock *sk)
     if (caller_should_see_hidden())
         return false;
 
-    /* 通过 sk->sk_socket->file 的 f_owner PID 判断 socket 创建者。
-     * 方法1(sock_i_owner)和方法3(sk_peer_pid)在 5.15 GKI 中不存在:
-     *   - sock_i_owner 是主线后续版本才加入的 helper
-     *   - sk_peer_pid 字段在 5.15 的 struct sock 中不存在
-     * f_owner 是 SIGIO 机制的核心字段(自 2.6 时代),socket() syscall
-     * 创建时由内核通过 fd_install 自动设置,覆盖所有用户态 daemon socket。 */
-    if (sk->sk_socket && sk->sk_socket->file && sk->sk_socket->file->f_owner.pid) {
-        pid = pid_vnr(sk->sk_socket->file->f_owner.pid);
-        if (pid > 0 && is_hidden_pid(pid))
-            return true;
-    }
+    /*
+     * 通过 sk->sk_socket->file 的 f_owner PID 判断 socket 创建者。
+     *
+     * 加锁说明（5.15 GKI，与内核 f_getown()/sock_i_uid() 一致）：
+     *  - sk->sk_socket 由 sk_callback_lock 保护（sock_orphan/sock_graft
+     *    用 write_lock_bh 修改），读取必须持 read_lock_bh；
+     *  - file->f_owner.pid 由 f_owner.lock + RCU 保护，struct pid 是 RCU
+     *    延迟释放（free_pid -> call_rcu），pid_vnr() 必须在 rcu_read_lock()
+     *    内调用，否则会访问已释放的 struct pid；
+     *  - is_hidden_pid() -> find_task_by_vpid() 同样要求调用方持有 RCU。
+     *
+     * 修复前：上述访问全部无锁，/proc/net/tcp 读取路径与进程退出/关闭
+     * socket 并发时触发 UAF（fault addr = dead000000000122，LIST_POISON），
+     * 导致内核 panic 黑屏重启。
+     */
+    rcu_read_lock();
+    read_lock_bh(&sk->sk_callback_lock);
+    sock = sk->sk_socket;
+    if (sock) {
+        file = sock->file;
+        if (file) {
+            read_lock_irq(&file->f_owner.lock);
+            if (file->f_owner.pid)
+                pid = pid_vnr(file->f_owner.pid);
+            read_unlock_irq(&file->f_owner.lock);
 
-    return false;
+            if (pid > 0 && is_hidden_pid(pid))
+                hidden = true;
+        }
+    }
+    read_unlock_bh(&sk->sk_callback_lock);
+    rcu_read_unlock();
+
+    return hidden;
 }
 
 // ---- 1. /proc/net/* 行过滤 ----
