@@ -53,9 +53,7 @@ REQUIRED_FILES=(
     "ksu_proc_pid_filter.c"
     "ksu_mounts_filter.c"
     "ksu_net_hide.c"
-    "ksu_selinux_spoof.c"
     "ksu_status_spoof.c"
-    "ksu_reboot_stealth.c"
     "ksu_ns_mtime_align.c"
     "ksu_debugfs_cleanup.c"
     "ksu_ap_ker_guard.c"
@@ -831,10 +829,7 @@ inject_code "$POSIX_TIMERS" \
     'clock_gettime (clock consistency)'
 fi
 
-# --- 22. reboot 隐匿 — 由 ksu_reboot_stealth.c 的 kprobe 实现 ----------------
-# 在模块内注册 __arm64_sys_reboot kprobe，无需内核源码注入。
-
-# --- 23. ap_ker 页驻留探测防御 — mm/madvise.c + mm/mincore.c -----------------
+# --- 22. ap_ker 页驻留探测防御 — mm/madvise.c + mm/mincore.c -----------------
 # 记录被 MADV_DONTNEED/REMOVE 逐出的单页，mincore 对这些页强制返回“未驻留”，
 # 对抗反作弊的页驻留 hook 探测。
 MADVISE="${KERNEL_COMMON}/mm/madvise.c"
