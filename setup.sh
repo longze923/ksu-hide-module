@@ -146,9 +146,7 @@ CONFIG_OPTIONS=(
     "CONFIG_KSU_HIDE_PROC_PID=y"
     "CONFIG_KSU_HIDE_MOUNTS=y"
     "CONFIG_KSU_HIDE_NET=y"
-    "CONFIG_KSU_HIDE_SELINUX=y"
     "CONFIG_KSU_HIDE_STATUS=y"
-    "CONFIG_KSU_HIDE_REBOOT=y"
     "CONFIG_KSU_HIDE_NS_MTIME=y"
     "CONFIG_KSU_HIDE_DEBUGFS=y"
     "CONFIG_KSU_HIDE_AP_KER=y"
@@ -618,8 +616,8 @@ inject_code "$TCP_FILE" \
     'ksu_net_proc_line_filter(NULL, sk))' \
     'tcp4_seq_show (TCP hiding)'
 
-# --- 4b. [诊断停用] unix sun_path 过滤 --------------------------------------
-if false; then
+# --- 4b. [已启用] unix sun_path 关键字过滤 -----------------------------------
+if true; then
 inject_before "$UNIX_FILE" \
     'under unix_table_lock here' \
     'if (u->addr && ksu_net_unix_line_filter(u->addr->name->sun_path, s)) { unix_state_unlock(s); return 0; }' \
@@ -766,7 +764,7 @@ add_extern "$PROC_BASE" \
 
 inject_before "$PROC_BASE" \
     'seq_puts(m, symname);' \
-    '{ char ksu_wchan_buf[KSYM_NAME_LEN]; size_t ksu_wchan_len = strnlen(symname, sizeof(symname)); if (ksu_wchan_filter(symname, ksu_wchan_len)) { ksu_wchan_spoof(ksu_wchan_buf, sizeof(ksu_wchan_buf)); seq_puts(m, ksu_wchan_buf); return 0; } }' \
+    '{ char ksu_wchan_buf[KSYM_NAME_LEN]; size_t ksu_wchan_len = strnlen(symname, sizeof(symname)); if (ksu_wchan_filter(symname, ksu_wchan_len)) { ksu_wchan_spoof(ksu_wchan_buf, sizeof(ksu_wchan_buf)); seq_puts(m, ksu_wchan_buf); seq_putc(m, 10); return 0; } }' \
     'ksu_wchan_filter(symname' \
     'proc_pid_wchan (wchan spoofing)'
 
@@ -860,6 +858,75 @@ inject_before "$MINCORE" \
     'if (ksu_probe_should_hide_resident(addr, walk->mm)) *vec = 0;' \
     'ksu_probe_should_hide_resident(addr' \
     'mincore_pte_range (mincore resident spoof)'
+
+# --- 24. sock_diag (netlink) 隐藏 — net/ipv4/inet_diag.c + net/unix/diag.c ----
+# 反作弊/ss 走 netlink SOCK_DIAG 枚举 socket，会绕过 /proc/net/*，这里补齐。
+INET_DIAG="${KERNEL_COMMON}/net/ipv4/inet_diag.c"
+add_extern "$INET_DIAG" \
+    'extern bool ksu_diag_should_skip_sock(struct sock *sk);' \
+    'ksu_diag_should_skip_sock(struct sock'
+
+inject_after_decls "$INET_DIAG" \
+    'static int sk_diag_fill(' \
+    'if (ksu_diag_should_skip_sock(sk)) return 0;' \
+    'ksu_diag_should_skip_sock(sk)) return 0' \
+    'inet sk_diag_fill (sock_diag skip)'
+
+inject_after_decls "$INET_DIAG" \
+    'int inet_sk_diag_fill(' \
+    'if (ksu_diag_should_skip_sock(sk)) return 0;' \
+    'ksu_diag_should_skip_sock(sk)) return 0' \
+    'inet_sk_diag_fill (sock_diag skip listen)'
+
+UNIX_DIAG="${KERNEL_COMMON}/net/unix/diag.c"
+add_extern "$UNIX_DIAG" \
+    'extern bool ksu_diag_should_skip_sock(struct sock *sk);' \
+    'ksu_diag_should_skip_sock(struct sock'
+
+inject_after_decls "$UNIX_DIAG" \
+    'static int sk_diag_dump(' \
+    'if (ksu_diag_should_skip_sock(sk)) return 0;' \
+    'ksu_diag_should_skip_sock(sk)) return 0' \
+    'unix sk_diag_dump (sock_diag skip)'
+
+# --- 25. kprobes list 隐藏 — kernel/kprobes.c (report_probe) -----------------
+# /sys/kernel/debug/kprobes/list 会暴露 __arm64_sys_reboot 上的 kprobe，
+# 对每个 probe 输出行做关键词过滤。
+KPROBES="${KERNEL_COMMON}/kernel/kprobes.c"
+add_extern "$KPROBES" \
+    'extern bool ksu_kprobes_list_filter(const char *line, size_t len);' \
+    'ksu_kprobes_list_filter(const char'
+
+inject_after_decls "$KPROBES" \
+    'static void report_probe(' \
+    'size_t ksu_kp_start = pi->count;' \
+    'ksu_kp_start = pi->count' \
+    'report_probe (kprobes list start)'
+
+inject_code "$KPROBES" \
+    '(kprobe_ftrace(pp) ? "[FTRACE]" : ""));' \
+    'if (ksu_kprobes_list_filter(pi->buf + ksu_kp_start, pi->count - ksu_kp_start)) { pi->count = ksu_kp_start; return; }' \
+    'ksu_kprobes_list_filter(pi->buf' \
+    'report_probe (kprobes list filter)'
+
+# --- 26. tracing available_filter_functions 隐藏 — kernel/trace/ftrace.c -----
+# 过滤 available_filter_functions 中与 kprobe 黑名单同源的函数名。
+FTRACE="${KERNEL_COMMON}/kernel/trace/ftrace.c"
+add_extern "$FTRACE" \
+    'extern bool ksu_tracing_line_filter(const char *line, size_t len);' \
+    'ksu_tracing_line_filter(const char'
+
+inject_after_decls "$FTRACE" \
+    'static int t_show(' \
+    'size_t ksu_t_start = m->count;' \
+    'ksu_t_start = m->count' \
+    't_show (tracing start)'
+
+inject_code "$FTRACE" \
+    'seq_printf(m, "%ps", (void *)rec->ip);' \
+    'if (ksu_tracing_line_filter(m->buf + ksu_t_start, m->count - ksu_t_start)) { m->count = ksu_t_start; return 0; }' \
+    'ksu_tracing_line_filter(m->buf' \
+    't_show (tracing line filter)'
 
 # ===========================================================================
 # 结果汇总

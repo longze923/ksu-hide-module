@@ -42,14 +42,6 @@
 #define KSU_SG_PID_SUKISID     KSU_FNV1A_CONST("sukisid")
 #define KSU_SG_PID_KSD         KSU_FNV1A_CONST("ksd")
 
-/* SELinux context 黑名单 hash */
-#define KSU_SG_CTX_SU          KSU_FNV1A_CONST("u:r:su:s0")
-#define KSU_SG_CTX_MAGISK      KSU_FNV1A_CONST("u:r:magisk:s0")
-#define KSU_SG_CTX_KSU         KSU_FNV1A_CONST("u:r:kernelsu:s0")
-#define KSU_SG_CTX_KSU2        KSU_FNV1A_CONST("u:r:ksu:s0")
-#define KSU_SG_CTX_SUKISU      KSU_FNV1A_CONST("u:r:sukisu:s0")
-#define KSU_SG_ZYGOTE          KSU_FNV1A_CONST("zygote")
-
 /* kprobe 符号黑名单 hash（短前缀也作为独立 hash 比对） */
 #define KSU_SG_SYM_ARM_REBOOT  KSU_FNV1A_CONST("__arm64_sys_reboot")
 #define KSU_SG_SYM_SYS_REBOOT  KSU_FNV1A_CONST("sys_reboot")
@@ -218,45 +210,6 @@ bool ksu_sg_contains_keyword(const char *s, size_t len)
     return false;
 }
 EXPORT_SYMBOL_GPL(ksu_sg_contains_keyword);
-
-
-/* ===================================================================
- *  Section C — SELinux context 匹配
- * ===================================================================
- */
-
-bool ksu_sg_hidden_selinux_ctx(const char *s, size_t len)
-{
-    u64 h;
-    if (!s || len == 0)
-        return false;
-
-    /* 完整 context hash 比较 */
-    h = ksu_fnv1a(s, len);
-    if (h == KSU_SG_CTX_SU || h == KSU_SG_CTX_MAGISK ||
-        h == KSU_SG_CTX_KSU || h == KSU_SG_CTX_KSU2 ||
-        h == KSU_SG_CTX_SUKISU)
-        return true;
-
-    /* 子串匹配：context 中可能含 "su"/"magisk"/"ksu" 子串 */
-    if (ksu_sg_contains_hash(s, len, KSU_SG_CTX_SU, 9))         /* u:r:su:s0 */
-        return true;
-    if (ksu_sg_contains_hash(s, len, KSU_SG_CTX_MAGISK, 13))    /* u:r:magisk:s0 */
-        return true;
-    if (ksu_sg_contains_hash(s, len, KSU_SG_CTX_KSU, 14))       /* u:r:kernelsu:s0 */
-        return true;
-    if (ksu_sg_contains_hash(s, len, KSU_SG_CTX_KSU2, 9))       /* u:r:ksu:s0 */
-        return true;
-    if (ksu_sg_contains_hash(s, len, KSU_SG_CTX_SUKISU, 14))    /* u:r:sukisu:s0 */
-        return true;
-
-    /* zygote 残留 (检测器8) */
-    if (ksu_sg_contains_hash(s, len, KSU_SG_ZYGOTE, 6))
-        return true;
-
-    return false;
-}
-EXPORT_SYMBOL_GPL(ksu_sg_hidden_selinux_ctx);
 
 
 /* ===================================================================

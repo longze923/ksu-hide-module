@@ -214,10 +214,6 @@ bool ksu_caller_trusted(void);
 /* 兼容旧接口 — 各模块原来调用的函数 */
 bool caller_should_see_hidden(void);
 
-/* 检测当前进程是否被调试中 */
-bool ksu_is_being_debugged(void);
-
-
 /* ===================================================================
  *  Section 4 — 极致隐藏性辅助
  * ===================================================================
@@ -225,17 +221,6 @@ bool ksu_is_being_debugged(void);
 
 /* 在栈上分配清零缓冲区（编译期已知大小，避免堆分配痕迹） */
 #define KSU_STACK_BUF(name, size)  char name[size] __aligned(8) = {0}
-
-/* 敏感操作前后的 cache 清理（仅在 arm64 上有效） */
-static __always_inline void ksu_cache_fence(void)
-{
-#if defined(__aarch64__)
-    /* dsb + isb 保证之前的内存操作完成 */
-    asm volatile("dsb sy\nisb" ::: "memory");
-#else
-    barrier();
-#endif
-}
 
 /* 在敏感操作前后插入随机延迟，破坏时序侧信道 */
 void ksu_jitter_delay(u32 max_us);
@@ -253,12 +238,6 @@ static __always_inline bool ksu_stealth_active(void)
     return atomic_read(&ksu_stealth_enabled) != 0;
 }
 
-/* 紧急关闭隐藏（被检测到时调用，进入"完全透明"模式） */
-void ksu_stealth_disable_all(void);
-
-/* 重新启用隐藏 */
-void ksu_stealth_enable_all(void);
-
 /* ===================================================================
  *  Section 6 — 各子模块独立开关 (定义于 ksu_sysfs.c，默认开启；
  *  原 /sys/kernel/ksu_hide/ 运行时接口已移除)
@@ -268,9 +247,7 @@ extern atomic_t ksu_hide_process_enabled;
 extern atomic_t ksu_hide_proc_pid_enabled;
 extern atomic_t ksu_hide_mounts_enabled;
 extern atomic_t ksu_hide_net_enabled;
-extern atomic_t ksu_hide_selinux_enabled;
 extern atomic_t ksu_hide_status_enabled;
-extern atomic_t ksu_hide_reboot_enabled;
 extern atomic_t ksu_hide_ns_mtime_enabled;
 extern atomic_t ksu_hide_debugfs_enabled;
 extern atomic_t ksu_hide_ap_ker_enabled;

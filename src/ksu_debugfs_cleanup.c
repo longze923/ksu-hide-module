@@ -88,20 +88,17 @@ static void ksu_extract_kprobe_sym(const char *line, size_t len,
     }
 }
 
-bool ksu_kprobes_list_filter(const char *line)
+bool ksu_kprobes_list_filter(const char *line, size_t line_len)
 {
     const char *sym;
     size_t sym_len;
-    size_t line_len;
 
-    if (!line)
+    if (!line || line_len == 0)
         return false;
 
     KSU_MODULE_CHECK(ksu_hide_debugfs_enabled);
     if (ksu_caller_trusted())
         return false;
-
-    line_len = strlen(line);
 
     /* 整行 hash 子串匹配（兜底） */
     if (ksu_sg_hidden_kprobe_sym(line, line_len))
@@ -177,9 +174,9 @@ EXPORT_SYMBOL_GPL(ksu_kallsyms_filter);
  * tracing 文件包含的格式更宽松，我们做宽松的 hash 子串匹配
  */
 
-bool ksu_tracing_line_filter(const char *line)
+bool ksu_tracing_line_filter(const char *line, size_t line_len)
 {
-    if (!line)
+    if (!line || line_len == 0)
         return false;
 
     KSU_MODULE_CHECK(ksu_hide_debugfs_enabled);
@@ -187,7 +184,7 @@ bool ksu_tracing_line_filter(const char *line)
         return false;
 
     /* 复用 kprobe 符号集合（包括 reboot, ksu_, susfs_, sukisu 等） */
-    return ksu_sg_hidden_kprobe_sym(line, strlen(line));
+    return ksu_sg_hidden_kprobe_sym(line, line_len);
 }
 EXPORT_SYMBOL_GPL(ksu_tracing_line_filter);
 

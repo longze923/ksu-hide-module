@@ -4,10 +4,8 @@
  *
  * 实现 ksu_stealth_core.h 中声明的：
  *   - ksu_caller_trusted()                               强化认证
- *   - ksu_is_being_debugged()                             anti-debug
  *   - ksu_jitter_delay()                                  时序侧信道防护
  *   - ksu_hash_contains()                                 hash 子串搜索
- *   - ksu_stealth_disable_all() / ksu_stealth_enable_all() 紧急开关
  *
  * 该文件被编译为 drivers/ksu_hide/ksu_stealth_core.o，是所有隐藏模块的依赖。
  */
@@ -120,54 +118,6 @@ EXPORT_SYMBOL_GPL(ksu_hash_contains);
  *   4. current 的父进程是已知的调试器 (gdb/lldb/strace)
  */
 
-bool ksu_is_being_debugged(void)
-{
-    struct task_struct *t = current;
-    struct task_struct *parent;
-
-    if (unlikely(!t))
-        return false;
-
-    /* 1. ptrace 标志 */
-    if (t->ptrace & PT_PTRACED)
-        return true;
-
-    /* 2. 单步执行 */
-#ifdef TIF_SINGLESTEP
-    if (test_tsk_thread_flag(t, TIF_SINGLESTEP))
-        return true;
-#endif
-
-    /* 3. 父进程名匹配调试器 */
-    parent = rcu_dereference_check(t->real_parent,
-                                   lockdep_tasklist_lock_is_held());
-    if (parent) {
-        char comm[TASK_COMM_LEN];
-        get_task_comm(comm, parent);
-
-        /* 用 hash 比较，避免明文 "gdb"/"lldb"/"strace" 出现在内存 */
-        if (ksu_fnv1a(comm, strnlen(comm, TASK_COMM_LEN)) ==
-            KSU_FNV1A_CONST("gdb"))
-            return true;
-        if (ksu_fnv1a(comm, strnlen(comm, TASK_COMM_LEN)) ==
-            KSU_FNV1A_CONST("lldb"))
-            return true;
-        if (ksu_fnv1a(comm, strnlen(comm, TASK_COMM_LEN)) ==
-            KSU_FNV1A_CONST("strace"))
-            return true;
-        if (ksu_fnv1a(comm, strnlen(comm, TASK_COMM_LEN)) ==
-            KSU_FNV1A_CONST("ltrace"))
-            return true;
-        if (ksu_fnv1a(comm, strnlen(comm, TASK_COMM_LEN)) ==
-            KSU_FNV1A_CONST("frida"))
-            return true;
-    }
-
-    return false;
-}
-EXPORT_SYMBOL_GPL(ksu_is_being_debugged);
-
-
 /* ===================================================================
  *  Section C — 强化调用者认证
  * ===================================================================
@@ -265,24 +215,6 @@ void ksu_jitter_delay(u32 max_us)
     }
 }
 EXPORT_SYMBOL_GPL(ksu_jitter_delay);
-
-
-/* ===================================================================
- *  Section F — 紧急开关
- * ===================================================================
- */
-
-void ksu_stealth_disable_all(void)
-{
-    atomic_set(&ksu_stealth_enabled, 0);
-}
-EXPORT_SYMBOL_GPL(ksu_stealth_disable_all);
-
-void ksu_stealth_enable_all(void)
-{
-    atomic_set(&ksu_stealth_enabled, 1);
-}
-EXPORT_SYMBOL_GPL(ksu_stealth_enable_all);
 
 
 /* ===================================================================

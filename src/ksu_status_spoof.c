@@ -33,25 +33,6 @@ KSU_OBF_DECL(ksu_tracerpid_zero, "TracerPid:\t0\n");
 // "CapEff:\t0000000000000000\n" — 长度 27
 KSU_OBF_DECL(ksu_capeff_zero, "CapEff:\t0000000000000000\n");
 
-// ---- 1. TracerPid 伪装 ----
-// 在 /proc/self/status 的 TracerPid 行输出前调用
-// 如果被隐藏进程正在被 ptrace（如 ksud 做 ptrace 注入），
-// 对目标进程返回 TracerPid: 0
-bool ksu_spoof_tracer_pid(pid_t tracer_pid, pid_t target_pid)
-{
-    KSU_MODULE_CHECK(ksu_hide_status_enabled);
-
-    if (caller_should_see_hidden())
-        return false;
-
-    // 如果 tracer 是隐藏进程，或 target 是隐藏进程
-    if (tracer_pid > 0 && (is_hidden_pid(tracer_pid) || is_hidden_pid(target_pid)))
-        return true;  // true = 应该伪装 TracerPid 为 0
-
-    return false;
-}
-EXPORT_SYMBOL_GPL(ksu_spoof_tracer_pid);
-
 // ---- 2. /proc/self/status 行级过滤 ----
 // 对 status 的每一行做关键词过滤
 // 过滤的内容包括：
@@ -185,34 +166,6 @@ void ksu_status_buffer_filter(char *buf, size_t *count)
     *count = dst;
 }
 EXPORT_SYMBOL_GPL(ksu_status_buffer_filter);
-
-// ---- 3. /proc/<pid>/stat 字段伪装 ----
-// 隐藏进程的 CPU 时间保留真实值，避免与 /proc/stat 总量不对称
-// 只伪装 num_threads（隐藏多线程 daemon 的真实线程数）
-bool ksu_stat_field_spoof(pid_t pid, u64 *utime, u64 *stime,
-                          u64 *cutime, u64 *cstime,
-                          int *num_threads)
-{
-    KSU_MODULE_CHECK(ksu_hide_status_enabled);
-
-    if (caller_should_see_hidden())
-        return false;
-
-    if (!is_hidden_pid(pid))
-        return false;
-
-    /* CPU 时间保留真实值 — 归零会导致所有进程 CPU 时间之和
-     * 与 /proc/stat 报告的总量不一致，形成可检测的统计不对称 */
-    (void)utime;
-    (void)stime;
-    (void)cutime;
-    (void)cstime;
-
-    if (num_threads) *num_threads = 1;  // 伪装为单线程
-
-    return true;
-}
-EXPORT_SYMBOL_GPL(ksu_stat_field_spoof);
 
 // ---- 4. /proc/<pid>/comm 伪装 ----
 // 隐藏进程的 comm 改为普通系统进程名

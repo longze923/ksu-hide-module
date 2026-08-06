@@ -142,68 +142,6 @@ EXPORT_SYMBOL_GPL(ksu_hidden_tgkill_filter);
 
 
 /* ===================================================================
- *  Section C — /proc/sched_debug 行过滤
- * ===================================================================
- *
- * sched_debug 行格式多样，例如：
- *   "  task R *0x0 1234 ksud"
- *   "runit/0-16060  (  16060, #threads: 1)"
- *   "ksud  S 0  1234  ..."
- *
- * 我们对所有数字 token 解析为 PID，与隐藏 PID 比对。
- * 如果该行包含隐藏 PID，过滤掉。
- */
-
-bool ksu_hidden_sched_line_filter(const char *line)
-{
-    const char *p;
-    const char *line_end;
-    char numbuf[16];
-    int numlen;
-
-    if (!line)
-        return false;
-
-    KSU_MODULE_CHECK(ksu_hide_process_enabled);
-
-    if (ksu_caller_trusted())
-        return false;
-
-    /* 找到行尾 */
-    line_end = line;
-    while (*line_end && *line_end != '\n')
-        line_end++;
-
-    /* 扫描所有数字 token */
-    p = line;
-    while (p < line_end) {
-        if (*p >= '0' && *p <= '9') {
-            numlen = 0;
-            while (p < line_end && *p >= '0' && *p <= '9' &&
-                   numlen < (int)sizeof(numbuf) - 1) {
-                numbuf[numlen++] = *p;
-                p++;
-            }
-            numbuf[numlen] = '\0';
-
-            if (numlen > 0) {
-                unsigned long val;
-                if (kstrtoul(numbuf, 10, &val) == 0 && val > 0) {
-                    if (is_hidden_pid((pid_t)val))
-                        return true;
-                }
-            }
-        } else {
-            p++;
-        }
-    }
-
-    return false;
-}
-EXPORT_SYMBOL_GPL(ksu_hidden_sched_line_filter);
-
-
-/* ===================================================================
  *  Section D — /proc/<pid>/task/ 线程枚举过滤
  * ===================================================================
  *

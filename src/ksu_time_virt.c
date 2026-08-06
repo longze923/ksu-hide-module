@@ -95,7 +95,7 @@ static void ksu_init_baseline_if_needed(void)
     /* 取一次性基线 */
     ktime_get_boottime_ts64(&ts);
     g_baseline.boot_time = ts;
-    /* baseline_ctxt 改为懒初始化:在 ksu_fake_proc_stat 首次调用时
+    /* baseline_ctxt 改为懒初始化:在 ksu_stat_buffer_filter 首次调用时
      * 用传入的真实 ctxt 作基线。原因:nr_context_switches() 在 5.15 GKI
      * 中是 kernel/sched/core.c 的 static 函数,不通过 sched/stat.h 导出,
      * 外部模块无法链接。懒初始化语义更准确:基线 = KSU 首次伪造时的真实值 */
@@ -214,69 +214,6 @@ void ksu_fake_uptime(u64 *real_sec, u64 *real_nsec,
     ksu_jitter_delay(2);
 }
 EXPORT_SYMBOL_GPL(ksu_fake_uptime);
-
-
-/* ===================================================================
- *  Section B — /proc/stat btime / ctxt / processes 伪造
- * ===================================================================
- *
- * 旧版固定 0.95 → 统计学可识别
- * 新版：动态保留比例 + 慢漂移 + 噪声
- */
-
-void ksu_fake_proc_stat(unsigned long long *ctxt,
-                        unsigned long long *processes,
-                        long *btime)
-{
-    unsigned long long real_ctxt, real_proc;
-    unsigned long long delta_ctxt, delta_proc;
-    u32 ctxt_ratio, proc_ratio;
-    s32 eff_ctxt_bp, eff_proc_bp;
-
-    if (!atomic_read(&ksu_hide_time_virt_enabled))
-        return;
-
-    if (ksu_caller_trusted())
-        return;
-
-    ksu_init_baseline_if_needed();
-
-    real_ctxt = *ctxt;
-    real_proc = *processes;
-
-    /* baseline_ctxt 懒初始化:首次伪造时用真实值作锚点。
-     * 0 表示未初始化(系统启动后 ctxt 不可能为 0) */
-    if (g_baseline.baseline_ctxt == 0)
-        g_baseline.baseline_ctxt = real_ctxt;
-
-    /* 动态系数 */
-    eff_ctxt_bp = (s32)g_baseline.ctxt_keep_ratio_bp + ksu_time_drift() + ksu_time_noise();
-    eff_proc_bp = (s32)g_baseline.proc_keep_ratio_bp + ksu_time_drift() + ksu_time_noise();
-
-    /* 钳位 — 与 ratio 97-100% 匹配,避免 drift+noise 叠加后过度偏离 */
-    if (eff_ctxt_bp < 9500) eff_ctxt_bp = 9500;
-    if (eff_ctxt_bp > 10000) eff_ctxt_bp = 10000;
-    if (eff_proc_bp < 9500) eff_proc_bp = 9500;
-    if (eff_proc_bp > 10000) eff_proc_bp = 10000;
-
-    ctxt_ratio = (u32)eff_ctxt_bp;
-    proc_ratio = (u32)eff_proc_bp;
-
-    if (real_ctxt > g_baseline.baseline_ctxt) {
-        delta_ctxt = real_ctxt - g_baseline.baseline_ctxt;
-        *ctxt = g_baseline.baseline_ctxt + div_u64(delta_ctxt * ctxt_ratio, 10000);
-    }
-
-    if (real_proc > g_baseline.baseline_processes) {
-        delta_proc = real_proc - g_baseline.baseline_processes;
-        *processes = g_baseline.baseline_processes + div_u64(delta_proc * proc_ratio, 10000);
-    }
-
-    /* btime: 强制对齐基线启动时间 */
-    if (btime && g_baseline.boot_time.tv_sec > 0)
-        *btime = g_baseline.boot_time.tv_sec;
-}
-EXPORT_SYMBOL_GPL(ksu_fake_proc_stat);
 
 
 /* ===================================================================

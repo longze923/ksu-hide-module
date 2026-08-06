@@ -43,87 +43,6 @@ extern bool ksu_sg_hidden_kprobe_sym(const char *s, size_t len);
 
 
 /* ===================================================================
- *  Section A — /proc/self/syscall 过滤
- * ===================================================================
- *
- * /proc/self/syscall 显示当前进程正在执行的 syscall：
- *   "<syscall_nr> <arg0> <arg1> ... <arg5> <sp> <pc>"
- *
- * 反作弊可让线程在特定 syscall 中阻塞，然后读 /proc/<pid>/syscall
- * 来确认 syscall 行为是否符合预期。
- *
- * 我们对隐藏进程的 syscall 号不做处理（其行为是合法的），
- * 但对反作弊进程查询其他进程 syscall 时，如果查询目标是我们关心的
- * syscall (reboot/prctl)，返回 0 (read) 等无敏感性的值。
- */
-
-/* reboot 的 syscall 号在 arm64 上是 __NR_reboot (142) */
-#define KSU_SC_REBOOT    __NR_reboot
-
-/* prctl 在 arm64 上是 __NR_prctl (167) */
-#define KSU_SC_PRCTL     __NR_prctl
-
-bool ksu_syscall_proc_filter(pid_t target_pid, int *syscall_nr,
-                              unsigned long args[6])
-{
-    if (!syscall_nr)
-        return false;
-
-    KSU_MODULE_CHECK(ksu_hide_syscall_enabled);
-
-    if (ksu_caller_trusted())
-        return false;
-
-    /* 如果 syscall_nr 本身是 reboot/prctl 探测，
-     * 且当前调用者不可信，把这个信息掩盖
-     * 注意：不替换为 __NR_read，因为读 /proc/self/syscall 时
-     * 进程实际不处于 read syscall 中，替换会留下不一致痕迹。
-     * 改为返回 -1（表示不在 syscall 中），对反作弊来说更合理。
-     */
-    if (*syscall_nr == KSU_SC_REBOOT || *syscall_nr == KSU_SC_PRCTL) {
-        *syscall_nr = -1;
-        if (args)
-            memset(args, 0, sizeof(*args) * 6);
-        return true;
-    }
-
-    return false;
-}
-EXPORT_SYMBOL_GPL(ksu_syscall_proc_filter);
-
-
-/* ===================================================================
- *  Section B — ftrace 痕迹过滤
- * ===================================================================
- *
- * /sys/kernel/debug/tracing/available_filter_functions 列出所有可被
- * ftrace 的函数，其中包含我们的 hook 目标（reboot 等）。
- *
- * /sys/kernel/debug/tracing/enabled
- * /sys/kernel/debug/tracing/set_ftrace_filter
- * /sys/kernel/debug/tracing/functions
- *
- * 这些文件内容由 ksu_debugfs_cleanup.c 的 ksu_tracing_line_filter 处理，
- * 此处提供额外的 ftrace ops 列表过滤
- */
-
-bool ksu_ftrace_ops_filter(const char *ops_name, size_t len)
-{
-    if (!ops_name || len == 0)
-        return false;
-
-    KSU_MODULE_CHECK(ksu_hide_syscall_enabled);
-
-    if (ksu_caller_trusted())
-        return false;
-
-    /* 复用 kprobe 符号集合 */
-    return ksu_sg_hidden_kprobe_sym(ops_name, len);
-}
-EXPORT_SYMBOL_GPL(ksu_ftrace_ops_filter);
-
-
-/* ===================================================================
  *  Section C — /proc/self/wchan 过滤
  * ===================================================================
  *
@@ -207,39 +126,6 @@ void ksu_wchan_spoof(char *out, size_t outsz)
     }
 }
 EXPORT_SYMBOL_GPL(ksu_wchan_spoof);
-
-
-/* ===================================================================
- *  Section D — syscall 表 hook 检测防御
- * ===================================================================
- *
- * 一些反作弊会通过 kallsyms 找到 sys_call_table 地址，然后逐项 hash
- * 与已知官方 hash 比对。SukiSU 通常不直接修改 sys_call_table (用 kprobe
- * 而非 hook 表项)，所以这个检测向量对我们威胁较小。
- *
- * 但如果未来某些 hook 改用直接修改 syscall 表，可以通过本节提供的
- * ksu_syscall_table_spoof() 在反作弊读取时返回原始地址。
- *
- * 当前实现：占位，预留接口
- */
-
-/* 检查某个地址是否落在我们的 hook 代码区
- * 如果是，返回原始内核地址；否则返回原值
- */
-unsigned long ksu_spoof_syscall_addr(unsigned long addr)
-{
-    if (!atomic_read(&ksu_hide_syscall_enabled))
-        return addr;
-
-    if (ksu_caller_trusted())
-        return addr;
-
-    /* TODO: 如果未来有直接 syscall 表 hook，在此返回原始地址
-     * 当前 SukiSU 用 kprobe，不需要这个逻辑
-     */
-    return addr;
-}
-EXPORT_SYMBOL_GPL(ksu_spoof_syscall_addr);
 
 
 MODULE_LICENSE("GPL");
