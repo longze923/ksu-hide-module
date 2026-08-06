@@ -19,17 +19,15 @@ config KSU_HIDE
 	  反检测能力。
 
 	  包含以下子模块：
-	    - 进程/线程隐藏 (/proc/pid, kill, pidfd, tgkill, sched_debug)
+	    - 进程/线程隐藏 (/proc/pid, kill, pidfd, tgkill)
 	    - 挂载信息过滤 (/proc/mounts, mountinfo, mountstats, filesystems)
 	    - 网络 socket 隐藏 (/proc/net/*, SOCK_DIAG)
-	    - SELinux context 伪装 (/proc/self/attr/*)
 	    - /proc/status 伪装 (TracerPid, CapEff, Uid/Gid, comm, stat)
-	    - reboot syscall 隐蔽性 (频率限制, 返回值伪装, 计数归一化)
 	    - namespace mtime 对齐 (对抗 magic_delta 检测)
 	    - kprobe/debugfs/ftrace 痕迹清理
 	    - 页驻留探针防御 (mincore/madvise)
-	    - /proc/iomem/cmdline/version 伪装
-	    - syscall 表完整性保护 / wchan 伪装
+	    - /proc/iomem 伪装
+	    - wchan 伪装
 	    - 时间源多时钟一致性
 
 	  Say Y if you want to enable stealth features.
@@ -48,7 +46,7 @@ config KSU_HIDE_STRING_GUARD
 	default y
 	help
 	  集中管理所有隐藏关键词的 hash 常量与匹配函数。
-	  进程名、SELinux context、kprobe 符号、模块名、mounts 关键词。
+	  进程名、kprobe 符号、模块名、mounts 关键词。
 
 config KSU_HIDE_PROCESS
 	bool "Process Hiding"
@@ -56,7 +54,7 @@ config KSU_HIDE_PROCESS
 	default y
 	help
 	  进程隐藏：/proc/pid 枚举、kill/pidfd/tgkill 探测防御、
-	  sched_debug 行过滤、线程枚举过滤。
+	  kill/pidfd/tgkill 探测防御、线程枚举过滤。
 
 config KSU_HIDE_PROC_PID
 	bool "/proc PID Filter"
@@ -79,26 +77,12 @@ config KSU_HIDE_NET
 	help
 	  网络 socket 隐藏：/proc/net/*, SOCK_DIAG (inet_diag/unix_diag)
 
-config KSU_HIDE_SELINUX
-	bool "SELinux Spoofing"
-	depends on KSU_HIDE
-	default y
-	help
-	  SELinux context 伪装、enforce 伪装、attr/prev 过滤
-
 config KSU_HIDE_STATUS
 	bool "Status Spoofing"
 	depends on KSU_HIDE
 	default y
 	help
 	  /proc/self/status 伪装 (TracerPid, CapEff), stat 伪装, comm 伪装
-
-config KSU_HIDE_REBOOT
-	bool "Reboot Stealth"
-	depends on KSU_HIDE
-	default y
-	help
-	  reboot syscall 频率限制、返回值伪装、syscall 计数归一化
 
 config KSU_HIDE_NS_MTIME
 	bool "Namespace mtime Alignment"
@@ -119,21 +103,21 @@ config KSU_HIDE_AP_KER
 	depends on KSU_HIDE
 	default y
 	help
-	  页驻留探针防御 (mincore/madvise/truncate)
+	  页驻留探针防御 (madvise 记录 + mincore 掩蔽)
 
 config KSU_HIDE_IOMEM
 	bool "IO Mem / Cmdline Spoofing"
 	depends on KSU_HIDE
 	default y
 	help
-	  /proc/iomem, /proc/ioports, /proc/cmdline, /proc/version 伪装
+	  /proc/iomem 伪装
 
 config KSU_HIDE_SYSCALL
 	bool "Syscall Integrity"
 	depends on KSU_HIDE
 	default y
 	help
-	  syscall 表保护、/proc/self/syscall 过滤、ftrace ops 过滤、wchan 伪装
+	  wchan 伪装
 
 config KSU_HIDE_TIME
 	bool "Time Source Consistency"
