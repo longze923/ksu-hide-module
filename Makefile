@@ -16,10 +16,10 @@ obj-$(CONFIG_KSU_HIDE_MOUNTS)         += ksu_mounts_filter.o
 obj-$(CONFIG_KSU_HIDE_NET)            += ksu_net_hide.o
 obj-$(CONFIG_KSU_HIDE_SYSFS)          += ksu_sysfs.o
 
-# === 功能模块（Build1 已恢复 A+B+D；selinux/reboot/ap_ker 仍停用）===
+# === 功能模块（Build1 已恢复 A+B+D；Build2 启用 reboot；selinux/ap_ker 仍停用）===
 # obj-$(CONFIG_KSU_HIDE_SELINUX)        += ksu_selinux_spoof.o
 obj-$(CONFIG_KSU_HIDE_STATUS)         += ksu_status_spoof.o
-# obj-$(CONFIG_KSU_HIDE_REBOOT)         += ksu_reboot_stealth.o
+obj-$(CONFIG_KSU_HIDE_REBOOT)         += ksu_reboot_stealth.o
 obj-$(CONFIG_KSU_HIDE_NS_MTIME)       += ksu_ns_mtime_align.o
 obj-$(CONFIG_KSU_HIDE_DEBUGFS)        += ksu_debugfs_cleanup.o
 # obj-$(CONFIG_KSU_HIDE_AP_KER)         += ksu_ap_ker_guard.o
