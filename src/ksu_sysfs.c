@@ -26,7 +26,7 @@ atomic_t ksu_hide_debugfs_enabled    = ATOMIC_INIT(1);
 atomic_t ksu_hide_ap_ker_enabled     = ATOMIC_INIT(1);
 atomic_t ksu_hide_iomem_enabled      = ATOMIC_INIT(1);
 atomic_t ksu_hide_syscall_enabled    = ATOMIC_INIT(1);
-atomic_t ksu_hide_time_virt_enabled  = ATOMIC_INIT(0); /* 虚拟时源保持停用 */
+atomic_t ksu_hide_time_virt_enabled  = ATOMIC_INIT(1); /* 虚拟时源（uptime/stat 伪装） */
 atomic_t ksu_hide_clock_check_enabled = ATOMIC_INIT(1); /* 时钟一致性检查（Build1） */
 
 MODULE_LICENSE("GPL");

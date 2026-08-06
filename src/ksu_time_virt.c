@@ -30,6 +30,7 @@
 #include <linux/tick.h>
 #include <linux/random.h>
 #include <linux/version.h>
+#include <linux/string.h>
 
 #include "ksu_stealth_core.h"
 
@@ -276,6 +277,124 @@ void ksu_fake_proc_stat(unsigned long long *ctxt,
         *btime = g_baseline.boot_time.tv_sec;
 }
 EXPORT_SYMBOL_GPL(ksu_fake_proc_stat);
+
+
+/* ===================================================================
+ *  Section B2 — /proc/stat 缓冲区过滤（5.15 适配）
+ * ===================================================================
+ * 5.15 的 show_stat() 直接调用 nr_context_switches()/total_forks 等，
+ * 无法通过指针修改，因此在 show_stat 末尾对整个 seq 缓冲区逐行过滤：
+ *   - "ctxt <real>"     按动态比例伪装
+ *   - "processes <real>" 按动态比例伪装
+ *   - btime 保持真实（与 /proc/uptime total / CLOCK_BOOTTIME 一致）
+ */
+
+static u64 ksu_parse_u64(const char *s, size_t len)
+{
+    u64 val = 0;
+    size_t i;
+
+    for (i = 0; i < len; i++) {
+        if (s[i] < '0' || s[i] > '9')
+            break;
+        if (val > (~0ULL - (u64)(s[i] - '0')) / 10)
+            break;
+        val = val * 10 + (u64)(s[i] - '0');
+    }
+    return val;
+}
+
+static u64 ksu_fake_stat_counter(u64 real, u64 baseline, u32 ratio_bp)
+{
+    u64 delta;
+
+    if (real <= baseline)
+        return real;
+
+    delta = real - baseline;
+    return baseline + div_u64(delta * ratio_bp, 10000);
+}
+
+void ksu_stat_buffer_filter(char *buf, size_t *count)
+{
+    size_t src = 0;
+    size_t dst = 0;
+
+    if (!buf || !count)
+        return;
+
+    if (!atomic_read(&ksu_hide_time_virt_enabled))
+        return;
+
+    if (ksu_caller_trusted())
+        return;
+
+    ksu_init_baseline_if_needed();
+
+    while (src < *count) {
+        size_t eol = src;
+        size_t line_len;
+        u64 real = 0;
+        bool rewrite = false;
+        char tmp[48];
+        int n = 0;
+
+        while (eol < *count && buf[eol] != '\n')
+            eol++;
+        if (eol < *count)
+            eol++;
+        line_len = eol - src;
+
+        if (line_len > 6 && memcmp(buf + src, "ctxt ", 5) == 0) {
+            real = ksu_parse_u64(buf + src + 5, line_len - 5);
+            if (real > 0) {
+                s32 eff = (s32)g_baseline.ctxt_keep_ratio_bp +
+                          ksu_time_drift() + ksu_time_noise();
+                u64 fake;
+
+                if (eff < 9500) eff = 9500;
+                if (eff > 10000) eff = 10000;
+
+                if (g_baseline.baseline_ctxt == 0)
+                    g_baseline.baseline_ctxt = real;
+                fake = ksu_fake_stat_counter(real,
+                        g_baseline.baseline_ctxt, (u32)eff);
+                n = snprintf(tmp, sizeof(tmp), "ctxt %llu\n", fake);
+                rewrite = true;
+            }
+        } else if (line_len > 12 && memcmp(buf + src, "processes ", 10) == 0) {
+            real = ksu_parse_u64(buf + src + 10, line_len - 10);
+            if (real > 0) {
+                s32 eff = (s32)g_baseline.proc_keep_ratio_bp +
+                          ksu_time_drift() + ksu_time_noise();
+                u64 fake;
+
+                if (eff < 9500) eff = 9500;
+                if (eff > 10000) eff = 10000;
+
+                if (g_baseline.baseline_processes == 0)
+                    g_baseline.baseline_processes = real;
+                fake = ksu_fake_stat_counter(real,
+                        g_baseline.baseline_processes, (u32)eff);
+                n = snprintf(tmp, sizeof(tmp), "processes %llu\n", fake);
+                rewrite = true;
+            }
+        }
+
+        if (rewrite && n > 0 && (size_t)n <= sizeof(tmp)) {
+            memmove(buf + dst, tmp, (size_t)n);
+            dst += (size_t)n;
+        } else {
+            memmove(buf + dst, buf + src, line_len);
+            dst += line_len;
+        }
+
+        src = eol;
+    }
+
+    *count = dst;
+}
+EXPORT_SYMBOL_GPL(ksu_stat_buffer_filter);
 
 
 /* ===================================================================

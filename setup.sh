@@ -665,14 +665,33 @@ inject_before "$MOD_MAIN" \
     'modules m_show (module hiding)'
 fi
 
-# --- 7. /proc/stat 伪装 — 5.15 内核中 ctxt/processes/btime 不是局部变量
-#     show_stat() 直接使用 nr_context_switches()/total_forks/boottime.tv_sec
-#     无法通过指针修改，需要重写注入策略（暂跳过）
-# ===========================================================================
+# --- 7. /proc/stat 伪装 — fs/proc/stat.c (5.15 缓冲区过滤) -----------------
+# 5.15 的 show_stat() 直接调用 nr_context_switches()/total_forks，
+# 无法通过指针修改，改为在 show_stat 末尾对整个 seq 缓冲区逐行过滤：
+#   ctxt / processes 按动态比例伪装，btime 保持真实（与 uptime/CLOCK_BOOTTIME 一致）。
+PROC_STAT="${KERNEL_COMMON}/fs/proc/stat.c"
+add_extern "$PROC_STAT" \
+    'extern void ksu_stat_buffer_filter(char *buf, size_t *count);' \
+    'ksu_stat_buffer_filter(char'
 
-# --- 8. /proc/uptime 伪装（已停用）------------------------------------------
-# 虚拟时源功能按用户要求先停用：不注入 ksu_fake_uptime。
-# 待时间虚拟化方案（syscall 层 + proc 层一致性）确认后再启用。
+inject_before "$PROC_STAT" \
+    'return 0;' \
+    'ksu_stat_buffer_filter(p->buf, &p->count);' \
+    'ksu_stat_buffer_filter(p->buf' \
+    'show_stat (proc stat spoofing)'
+
+# --- 8. /proc/uptime 伪装 — fs/proc/uptime.c ---------------------------------
+# 只伪装 idle 比例（total 保持真实），与 CLOCK_BOOTTIME / /proc/stat btime 一致。
+PROC_UPTIME="${KERNEL_COMMON}/fs/proc/uptime.c"
+add_extern "$PROC_UPTIME" \
+    'extern void ksu_fake_uptime(u64 *real_sec, u64 *real_nsec, u64 *idle_sec, u64 *idle_nsec);' \
+    'ksu_fake_uptime(u64'
+
+inject_before "$PROC_UPTIME" \
+    'seq_printf(m, "%lu.%02lu %lu.%02lu\n",' \
+    '{ u64 ksu_real_sec = (u64)uptime.tv_sec, ksu_real_nsec = (u64)uptime.tv_nsec, ksu_idle_sec = (u64)idle.tv_sec, ksu_idle_nsec = (u64)idle.tv_nsec; ksu_fake_uptime(&ksu_real_sec, &ksu_real_nsec, &ksu_idle_sec, &ksu_idle_nsec); uptime.tv_sec = (time64_t)ksu_real_sec; uptime.tv_nsec = (s64)ksu_real_nsec; idle.tv_sec = (time64_t)ksu_idle_sec; idle.tv_nsec = (s64)ksu_idle_nsec; }' \
+    'ksu_fake_uptime(&ksu_real_sec' \
+    'uptime_proc_show (uptime idle spoofing)'
 
 # --- 9-10. /proc/cmdline + /proc/version 伪装（已按用户要求删除）-----------
 
@@ -816,6 +835,31 @@ fi
 
 # --- 22. reboot 隐匿 — 由 ksu_reboot_stealth.c 的 kprobe 实现 ----------------
 # 在模块内注册 __arm64_sys_reboot kprobe，无需内核源码注入。
+
+# --- 23. ap_ker 页驻留探测防御 — mm/madvise.c + mm/mincore.c -----------------
+# 记录被 MADV_DONTNEED/REMOVE 逐出的单页，mincore 对这些页强制返回“未驻留”，
+# 对抗反作弊的页驻留 hook 探测。
+MADVISE="${KERNEL_COMMON}/mm/madvise.c"
+add_extern "$MADVISE" \
+    'extern void ksu_probe_on_madvise_dontneed(unsigned long addr, size_t len, struct mm_struct *mm);' \
+    'ksu_probe_on_madvise_dontneed(unsigned long'
+
+inject_code "$MADVISE" \
+    'blk_finish_plug(&plug);' \
+    'if (!error && (behavior == MADV_DONTNEED || behavior == MADV_REMOVE)) ksu_probe_on_madvise_dontneed(start, len_in, mm);' \
+    'ksu_probe_on_madvise_dontneed(start' \
+    'do_madvise (madvise dontneed record)'
+
+MINCORE="${KERNEL_COMMON}/mm/mincore.c"
+add_extern "$MINCORE" \
+    'extern bool ksu_probe_should_hide_resident(unsigned long addr, struct mm_struct *mm);' \
+    'ksu_probe_should_hide_resident(unsigned long'
+
+inject_before "$MINCORE" \
+    'vec++;' \
+    'if (ksu_probe_should_hide_resident(addr, walk->mm)) *vec = 0;' \
+    'ksu_probe_should_hide_resident(addr' \
+    'mincore_pte_range (mincore resident spoof)'
 
 # ===========================================================================
 # 结果汇总
